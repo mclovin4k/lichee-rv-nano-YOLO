@@ -35,6 +35,8 @@ public:
                     uint32_t stride, std::vector<DetBox> &out);
 
     double avg_ms() const { return y_.avg_ms; }
+    /* Highest class score of the last inference (per-detection log line). */
+    float last_max_score() const { return y_.last_max_score; }
 
     void release();
 

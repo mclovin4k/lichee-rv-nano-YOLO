@@ -93,6 +93,40 @@ int main(int argc, char *argv[]) {
     const int class_cnt = atoi(argv[2]);
     const int frame_size = atoi(argv[3]);
 
+    /* Offline detector check: run one 640x640 NV21 frame from a file through
+       the same infer path the camera feeds, then exit. Used to compare the
+       decode against the reference implementation on identical pixels. */
+    const char *test_nv21 = getenv("SY_TEST_NV21");
+    if (test_nv21 != NULL) {
+        const uint32_t tw = (uint32_t)frame_size, th = (uint32_t)frame_size;
+        const size_t y_len = (size_t)tw * th;
+        FILE *tf = fopen(test_nv21, "rb");
+        if (tf == NULL) {
+            printf("test: cannot open %s\n", test_nv21);
+            return -1;
+        }
+        std::vector<uint8_t> tbuf(y_len + y_len / 2);
+        size_t got = fread(tbuf.data(), 1, tbuf.size(), tf);
+        fclose(tf);
+        printf("test: read %zu of %zu bytes\n", got, tbuf.size());
+        if (got < tbuf.size()) return -1;
+
+        YoloModelDetector tdet;
+        if (tdet.setup_model(model_path, class_cnt, 0.5, 0.5) < 0) return -1;
+        for (int rep = 0; rep < 3; rep++) {
+            std::vector<DetBox> out;
+            int rc = tdet.detect_nv21(tbuf.data(), tbuf.data() + y_len, (int)tw, (int)th, tw, out);
+            printf("test: rc=%d max=%.3f n=%zu", rc, tdet.last_max_score(), out.size());
+            for (size_t i = 0; i < out.size(); i++)
+                printf(" | %d:%.3f [%.1f %.1f %.1f %.1f]", out[i].cls, out[i].score, out[i].x1,
+                       out[i].y1, out[i].x2, out[i].y2);
+            printf("\n");
+            fflush(stdout);
+        }
+        tdet.release();
+        return 0;
+    }
+
     /* Raw NV21 capture mode: the VPSS channel emits the sensor frame as NV21
        and the backend maps both planes for us. Must be set before open(),
        the channel format is chosen there. */
@@ -185,6 +219,18 @@ int main(int argc, char *argv[]) {
                 fflush(stdout);
                 detector.setup_model(model_path, class_cnt, 0.5, 0.5);
             } else if (rc == 0) {
+                /* Per-detection log line: class, score and box for every
+                   published frame; handy for comparing against the TDL
+                   reference sample on the same scene. */
+                char dbg[512];
+                int off = snprintf(dbg, sizeof(dbg), "det: n=%d max=%.3f", (int)out.size(),
+                                   detector.last_max_score());
+                for (size_t i = 0; i < out.size() && i < 6 && off < (int)sizeof(dbg) - 48; i++)
+                    off += snprintf(dbg + off, sizeof(dbg) - (size_t)off,
+                                    " | %d:%.2f [%.0f %.0f %.0f %.0f]", out[i].cls, out[i].score,
+                                    out[i].x1, out[i].y1, out[i].x2, out[i].y2);
+                printf("%s\n", dbg);
+                fflush(stdout);
                 std::lock_guard<std::mutex> bl(slot.m);
                 slot.boxes = out;
                 slot.generation++;
@@ -230,6 +276,24 @@ int main(int argc, char *argv[]) {
         const uint32_t stride = f.u32Stride[0];
         const int w = (int)f.u32Width;
         const int h = (int)f.u32Height;
+
+        // One-shot raw NV21 dump for offline analysis (SY_DUMP_NV21=<path>).
+        static const char *dump_path = getenv("SY_DUMP_NV21");
+        static bool dumped = false;
+        if (dump_path != NULL && !dumped) {
+            FILE *df = fopen(dump_path, "wb");
+            if (df != NULL) {
+                const size_t ylen = (size_t)f.u32Stride[0] * h;
+                const size_t uvlen = (size_t)f.u32Stride[1] * (h / 2);
+                fwrite(yp, 1, ylen, df);
+                if (uvp != NULL) fwrite(uvp, 1, uvlen, df);
+                fclose(df);
+                printf("dump: wrote %s y=%zu uv=%zu stride=%u/%u w=%d h=%d\n", dump_path, ylen,
+                       uvlen, f.u32Stride[0], f.u32Stride[1], w, h);
+                fflush(stdout);
+            }
+            dumped = true;
+        }
 
         // Hand a copy of the frame to the detector, but only when it is idle.
         {

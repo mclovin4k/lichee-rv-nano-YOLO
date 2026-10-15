@@ -45,19 +45,12 @@
 
 /* ---- small helpers ------------------------------------------------------ */
 
-/* Tensor writing is fixed: planar NCHW, RGB order, gain from the tensor's own
-   qscale, 128 subtracted. The HWC/BGR/gain sweep that found these is over;
-   they stay as the only configuration. */
-static int g_bias = 128;    /* value subtracted from every channel first */
+/* Tensor writing: planar NCHW, RGB order, gain from the tensor's own qscale,
+   no offset -- all three verified against the TDL reference implementation on
+   identical frames (see tensor_from_rgb and preprocess for the evidence). */
 static int g_stretch = 0;   /* 1 = fill the model rect, distorting aspect */
 
 void nv_yolo8_set_stretch(int stretch) { g_stretch = stretch; }
-
-/* The model metadata pins down the input shape and qscale but not how the
-   three planes are laid out in memory nor their order. Both were guessed; a
-   wrong guess still yields a plausible-looking tensor and a network that is
-   simply and consistently sure it sees nothing, so they are switchable. */
-
 
 static double now_ms(void) {
   struct timespec ts;
@@ -111,9 +104,9 @@ int nv_yolo8_open(nv_yolo8_t *y, const char *model_path, int num_classes, float 
   y->n_out = n_out;
   if (y->in_ptr == NULL || y->in_size == 0) return -1;
 
-  /* The input tensor's own quantisation. preprocess() currently ignores these
-     and writes raw 0..255 straight into int8; if the runtime declares a
-     non-zero zero point that is wrong and the network sees garbage. */
+  /* The input tensor's own quantisation: preprocess() fills the tensor in
+     these units (q = pixel/std * qscale, no offset -- the reference config's
+     mean is 0). */
   y->in_qscale = CVI_NN_TensorQuantScale(&in[0]);
   y->in_zero = (int)CVI_NN_TensorQuantZeroPoint(&in[0]);
 
@@ -151,8 +144,9 @@ int nv_yolo8_open(nv_yolo8_t *y, const char *model_path, int num_classes, float 
   printf("yolo8: input tensor ptr=%p size=%zu qscale=%f zero=%d\n", (void *)y->in_ptr, y->in_size,
          y->in_qscale, y->in_zero);
   for (int i = 0; i < 3; i++) {
-    printf("yolo8:   scale %d: box %dx%d cls %dx%d\n", i, y->out_ch[i], y->out_h[i],
-           y->out_w[i + 3], y->out_h[i + 3]);
+    printf("yolo8:   scale %d: box %dx%d q=%.6f z=%d | cls %dx%d q=%.6f z=%d\n", i, y->out_ch[i],
+           y->out_h[i], y->out_q[i], y->out_zero[i], y->out_ch[i + 3], y->out_h[i + 3],
+           y->out_q[i + 3], y->out_zero[i + 3]);
   }
   return 0;
 }
@@ -251,7 +245,9 @@ static void geom(const nv_yolo8_t *y, int cam_w, int cam_h, int *px, int *py, fl
    base_model.cpp:122 pre-multiplies both by the input tensor's qscale.
    For the YOLOv8 detector configs factor is 1/255 and mean is 0, so the
    effective per-pixel gain is (1/255) * qscale -- with qscale 126.998978
-   that is 0.4980355, mapping pixel 0..255 onto q 0..127.
+   that is 0.4980355, mapping pixel 0..255 onto q 0..127. Mean is 0 there,
+   so nothing is subtracted first: a -128 offset (an earlier revision had
+   one) shifts every pixel half a range off the quantiser's calibration.
 
    Writing the raw byte instead (as the previous revision did) is wrong by
    2.008x and also wraps every pixel above 127 to a negative int8, which is
@@ -264,7 +260,7 @@ static void tensor_from_rgb(nv_yolo8_t *y) {
     const uint8_t *src = y->in_rgb + p;
     int8_t *dst = (int8_t *)y->in_ptr + (size_t)p * mw * mh;
     for (int i = 0, n = mw * mh; i < n; i++) {
-      dst[i] = clamp_q(((int)src[(size_t)i * 3] - g_bias) * gain);
+      dst[i] = clamp_q((int)src[(size_t)i * 3] * gain);
     }
   }
 }
@@ -298,13 +294,18 @@ static void preprocess(nv_yolo8_t *y, const uint8_t *y_plane, const uint8_t *uv_
       uint8_t yv = yrow[sx];
       int u = uvrow[(sx >> 1) * 2 + (uv_swap ? 0 : 1)];
       int v = uvrow[(sx >> 1) * 2 + (uv_swap ? 1 : 0)];
-      int c = yv - 128;
-      int d = u - 128;
-      int e = v - 128;
-      /* BT.601 limited-range, the convention this SDK's YOLO models use */
-      int r = (298 * c + 409 * e + 128) >> 8;
-      int g = (298 * c - 100 * d - 208 * e + 128) >> 8;
-      int b = (298 * c + 516 * d + 128) >> 8;
+      const int d = u - 128;
+      const int e = v - 128;
+      /* Full-range BT.601 (JFIF) coefficients. The VPSS emits full-range
+         NV21: raw dumps of the live sensor show Y down to 15 and up to 255,
+         both outside a limited 16..235 clamp, and the model scores match the
+         TDL reference pixel-for-pixel under this reading. The first revision
+         used the limited-range integer formula with y - 128 (a typo of
+         y - 16), which crushed everything below luma 128 to black and cost
+         the detector most of its input -- that was the missing boxes. */
+      int r = yv + ((91881 * e) >> 16);
+      int g = yv - ((22554 * d + 46802 * e) >> 16);
+      int b = yv + ((116130 * d) >> 16);
       *dst++ = (uint8_t)(r < 0 ? 0 : (r > 255 ? 255 : r));
       *dst++ = (uint8_t)(g < 0 ? 0 : (g > 255 ? 255 : g));
       *dst++ = (uint8_t)(b < 0 ? 0 : (b > 255 ? 255 : b));
@@ -376,7 +377,10 @@ static float dfl_dist(const int8_t *box, int stride, int idx, int bh, int bw, in
   float p[32];
   const int8_t *v = box + (size_t)idx * bins * bh * bw;
   for (int b = 0; b < bins; b++) {
-    float q = sigmoidf_u8(v[((size_t)b * bh + gy) * bw + gx], zb, qb);
+    /* Raw dequantised logits, exactly as the SDK softmaxes them (yolov8.cpp:
+       exp(p * qscale)). A sigmoid here compresses the distribution and pulls
+       every expected distance to the middle of the bin range. */
+    const float q = ((float)v[((size_t)b * bh + gy) * bw + gx] - (float)zb) * qb;
     p[b] = q;
     if (q > mx) mx = q;
   }
