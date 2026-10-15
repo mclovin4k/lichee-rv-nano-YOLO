@@ -1,0 +1,517 @@
+diff --git a/opencv-mobile-4.13.0/modules/highgui/include/opencv2/highgui/highgui.hpp b/opencv-mobile-4.13.0/modules/highgui/include/opencv2/highgui/highgui.hpp
+index f431159..5f6fe2c 100644
+--- a/opencv-mobile-4.13.0/modules/highgui/include/opencv2/highgui/highgui.hpp
++++ b/opencv-mobile-4.13.0/modules/highgui/include/opencv2/highgui/highgui.hpp
+@@ -18,6 +18,7 @@
+ #define OPENCV_HIGHGUI_HPP
+ 
+ #include "opencv2/core.hpp"
++#include <utility>
+ 
+ enum
+ {
+@@ -87,6 +88,15 @@ public:
+ 
+     VideoCapture& operator>>(Mat& bgr_image);
+ 
++    /* Reads a frame and keeps the raw camera frame (VIDEO_FRAME_INFO_S) alive.
++       Returns {raw_frame_ptr, bgr_frame_ptr}; the caller MUST call
++       releaseImagePtr() afterwards. Pairs one pixel buffer for NPU inference
++       with the cv::Mat used for drawing, avoiding a cv::Mat ->
++       VIDEO_FRAME_INFO_S round trip. */
++    std::pair<void*, void*> capture(Mat& bgr_image);
++
++    void releaseImagePtr();
++
+     bool set(int propId, double value);
+ 
+     double get(int propId) const;
+diff --git a/opencv-mobile-4.13.0/modules/highgui/src/capture_cvi.cpp b/opencv-mobile-4.13.0/modules/highgui/src/capture_cvi.cpp
+index fc33463..3f4bc89 100644
+--- a/opencv-mobile-4.13.0/modules/highgui/src/capture_cvi.cpp
++++ b/opencv-mobile-4.13.0/modules/highgui/src/capture_cvi.cpp
+@@ -38,6 +38,7 @@
+ #include <unistd.h>
+ 
+ #include <pthread.h>
++#include <time.h>
+ #include <sys/prctl.h>
+ 
+ namespace cv {
+@@ -2667,14 +2668,19 @@ static const struct sns_ini_cfg* get_sns_ini_cfg()
+     if (device_model == 5)
+     {
+         // licheerv nano new version
++        // NOTE (this unit): MIPI lanes are wired {2,0,1,-1,-1},
++        // matching /mnt/data/sensor_cfg.ini and the stock binaries.
++        // Upstream default {4,3,2,-1,-1} fails pfnSnsProbe (0xc00e8006) here.
++        // mclk=0 matches /mnt/data/sensor_cfg.ini (upstream mclk=1 leaves
++        // the sensor unclocked -> I2C probe fails).
+         static const struct sns_ini_cfg lpirvnano = {
+             4,  // bus_id
+             29, // sns_i2c_addr
+             0,  // mipi_dev
+-            {4, 3, 2, -1, -1},  // lane_id
++            {2, 0, 1, -1, -1},  // lane_id
+             {0, 0, 0, 0, 0},    // pn_swap
+             true,   // mclk_en
+-            1       // mclk
++            0       // mclk
+         };
+ 
+         return &lpirvnano;
+@@ -2758,6 +2764,26 @@ public:
+ 
+     int read_frame(unsigned char* bgrdata);
+ 
++    int capture(unsigned char* bgrdata);
++
++    int release_image_ptr();
++
++    /* Raw-mode plane mappings, cached per physical address (see read_frame). */
++    struct RawMap {
++        CVI_U64 phy;
++        void* va;
++        CVI_U32 len;
++    };
++    static const int kRawMapMax = 16;
++    RawMap raw_maps[kRawMapMax];
++    int raw_map_count = 0;
++    void* raw_map_plane(CVI_U64 phy, CVI_U32 len);
++    void raw_unmap_all();
++
++    void* raw_frame();
++
++    void* raw_bgr_frame();
++
+     int stop_streaming();
+ 
+     int close();
+@@ -2769,7 +2795,14 @@ public:
+     int output_width;
+     int output_height;
+ 
++    // raw mode (env OPENCV_CVI_RAW=1): the VPSS channel emits NV21 and
++    // read_frame() maps the two planes for the caller instead of converting
++    // to BGR. Callers read stFrameInfo_bgr.stVFrame.pu8VirAddr[0/1]; the
++    // mappings are cached and stay valid until close().
++    int raw_mode = 0;
++
+     // flag
++    int b_frame_held = 0;
+     int b_vb_inited = 0;
+     int b_sys_inited = 0;
+     int b_sys_vi_opened = 0;
+@@ -2828,6 +2861,9 @@ capture_cvi_impl::capture_cvi_impl()
+     output_width = 0;
+     output_height = 0;
+ 
++    raw_mode = 0;
++
++    b_frame_held = 0;
+     b_vb_inited = 0;
+     b_sys_inited = 0;
+     b_sys_vi_opened = 0;
+@@ -2878,6 +2914,10 @@ capture_cvi_impl::~capture_cvi_impl()
+ 
+ int capture_cvi_impl::open(int width, int height, float fps)
+ {
++    {
++        const char* raw_env = getenv("OPENCV_CVI_RAW");
++        raw_mode = (raw_env != NULL && raw_env[0] != '\0' && raw_env[0] != '0');
++    }
+     const CVI_U16 cap_width = get_sensor_cfg()->cap_width;
+     const CVI_U16 cap_height = get_sensor_cfg()->cap_height;
+     const float cap_fps = get_sensor_cfg()->cap_fps;
+@@ -3290,7 +3330,7 @@ int capture_cvi_impl::open(int width, int height, float fps)
+             }
+         }
+ 
+-        usleep(20); // FIXME why ?
++        usleep(50000); // let the sensor boot after clock enable (was 20us)
+ 
+         {
+             CVI_S32 ret = CVI_MIPI_SetSensorReset(get_sns_ini_cfg()->mipi_dev, 0);
+@@ -3302,18 +3342,25 @@ int capture_cvi_impl::open(int width, int height, float fps)
+             }
+         }
+ 
++        usleep(50000); // settle after reset release
++
+         if (pstSnsObj->pfnSnsProbe)
+         {
+-            CVI_S32 ret = pstSnsObj->pfnSnsProbe(ViPipe);
++            CVI_S32 ret = CVI_SUCCESS;
++            // Probe may race sensor boot; retry a few times.
++            for (int tries = 0; tries < 5; tries++)
++            {
++                ret = pstSnsObj->pfnSnsProbe(ViPipe);
++                if (ret == CVI_SUCCESS)
++                    break;
++                fprintf(stderr, "pfnSnsProbe try %d failed %x, retrying...\n", tries, ret);
++                usleep(50000);
++            }
+             if (ret != CVI_SUCCESS)
+             {
+-                fprintf(stderr, "pfnSnsProbe failed %x\n", ret);
+-                if (get_device_model() == 5)
+-                {
+-                    fprintf(stderr, "If you use an old version of licheerv-nano, run \"touch /boot/alpha\" and then \"reboot\"\n");
+-                }
+-                ret_val = -1;
+-                goto OUT;
++                // NOTE: continue anyway - on some units probe falsely fails
++                // (c00e8006) while the sensor streams fine after full init.
++                fprintf(stderr, "pfnSnsProbe failed %x, continuing anyway\n", ret);
+             }
+         }
+ 
+@@ -3338,8 +3385,17 @@ int capture_cvi_impl::open(int width, int height, float fps)
+         stPipeAttr.bDiscardProPic = CVI_FALSE;
+         stPipeAttr.bYuvBypassPath = CVI_FALSE;
+ 
++        /* A pipe leaked by a previous process (teardown can die before
++           DestroyPipe) would block every restart until a reboot; the kernel
++           keeps it after the process is gone. Reclaim the id instead. */
+         CVI_S32 ret = CVI_VI_CreatePipe(ViPipe, &stPipeAttr);
+         if (ret != CVI_SUCCESS)
++        {
++            fprintf(stderr, "CVI_VI_CreatePipe failed %x, reclaiming stale pipe\n", ret);
++            CVI_VI_DestroyPipe(ViPipe);
++            ret = CVI_VI_CreatePipe(ViPipe, &stPipeAttr);
++        }
++        if (ret != CVI_SUCCESS)
+         {
+             fprintf(stderr, "CVI_VI_CreatePipe failed %x\n", ret);
+             ret_val = -1;
+@@ -3593,8 +3649,16 @@ int capture_cvi_impl::open(int width, int height, float fps)
+             stGrpAttr.stFrameRate.s32DstFrameRate = -1;
+             stGrpAttr.u8VpssDev = 0;
+ 
++            /* Same reclaim as the VI pipe: a group leaked by a killed or
++               crashed previous run must not force a board reboot. */
+             CVI_S32 ret = CVI_VPSS_CreateGrp(VpssGrp, &stGrpAttr);
+             if (ret != CVI_SUCCESS)
++            {
++                fprintf(stderr, "CVI_VPSS_CreateGrp failed %x, reclaiming stale group\n", ret);
++                CVI_VPSS_DestroyGrp(VpssGrp);
++                ret = CVI_VPSS_CreateGrp(VpssGrp, &stGrpAttr);
++            }
++            if (ret != CVI_SUCCESS)
+             {
+                 fprintf(stderr, "CVI_VPSS_CreateGrp failed %x\n", ret);
+                 ret_val = -1;
+@@ -3629,7 +3693,7 @@ int capture_cvi_impl::open(int width, int height, float fps)
+             stChnAttr.u32Width = output_width;
+             stChnAttr.u32Height = output_height;
+             stChnAttr.enVideoFormat = VIDEO_FORMAT_LINEAR;
+-            stChnAttr.enPixelFormat = PIXEL_FORMAT_BGR_888;
++            stChnAttr.enPixelFormat = raw_mode ? PIXEL_FORMAT_NV21 : PIXEL_FORMAT_BGR_888;
+             stChnAttr.stFrameRate.s32SrcFrameRate = -1;
+             stChnAttr.stFrameRate.s32DstFrameRate = -1;
+             stChnAttr.bMirror = CVI_FALSE;
+@@ -3762,10 +3826,14 @@ int capture_cvi_impl::read_frame(unsigned char* bgrdata)
+ 
+     // vi get frame
+     {
++        struct timespec t0, t1;
++        clock_gettime(CLOCK_MONOTONIC, &t0);
+         CVI_S32 ret = CVI_VI_GetChnFrame(ViPipe, ViChn, &stFrameInfo, 2000);
++        clock_gettime(CLOCK_MONOTONIC, &t1);
++        long vi_ms = (t1.tv_sec - t0.tv_sec) * 1000 + (t1.tv_nsec - t0.tv_nsec) / 1000000;
+         if (ret != CVI_SUCCESS)
+         {
+-            fprintf(stderr, "CVI_VI_GetChnFrame failed %x\n", ret);
++            fprintf(stderr, "CVI_VI_GetChnFrame failed %x (%ld ms)\n", ret, vi_ms);
+             ret_val = -1;
+             goto OUT;
+         }
+@@ -3810,10 +3878,14 @@ int capture_cvi_impl::read_frame(unsigned char* bgrdata)
+ 
+     // vpss get frame
+     {
++        struct timespec t0, t1;
++        clock_gettime(CLOCK_MONOTONIC, &t0);
+         CVI_S32 ret = CVI_VPSS_GetChnFrame(VpssGrp, VpssChn, &stFrameInfo_bgr, 2000);
++        clock_gettime(CLOCK_MONOTONIC, &t1);
++        long vp_ms = (t1.tv_sec - t0.tv_sec) * 1000 + (t1.tv_nsec - t0.tv_nsec) / 1000000;
+         if (ret != CVI_SUCCESS)
+         {
+-            fprintf(stderr, "CVI_VPSS_GetChnFrame failed %x\n", ret);
++            fprintf(stderr, "CVI_VPSS_GetChnFrame failed %x (%ld ms)\n", ret, vp_ms);
+             ret_val = -1;
+             goto OUT;
+         }
+@@ -3845,7 +3917,30 @@ int capture_cvi_impl::read_frame(unsigned char* bgrdata)
+         fprintf(stderr, "vf u32FrameFlag = %u\n", vf.u32FrameFlag);
+     }
+ 
+-    // copy bgr
++    // copy bgr -- or, in raw mode, map the NV21 planes for the caller
++    if (raw_mode)
++    {
++        VIDEO_FRAME_S& vf = stFrameInfo_bgr.stVFrame;
++
++        /* The plane mappings are cached per physical address: the VPSS
++           channel hands out the same block again and again, and mapping and
++           unmapping it every frame is churn the platform's drivers do not
++           enjoy (the TPU driver wedges far sooner when the stream is hot).
++           The cache stays valid until close(); each frame still needs the
++           invalidate, or the CPU would read the previous frame's lines. */
++        vf.pu8VirAddr[0] = (CVI_U8*)raw_map_plane(vf.u64PhyAddr[0], vf.u32Length[0]);
++
++        {
++            CVI_U64 uv_phy = vf.u64PhyAddr[1];
++            CVI_U32 uv_len = vf.u32Length[1];
++            if (uv_phy == 0 && vf.u64PhyAddr[0] != 0)
++                uv_phy = vf.u64PhyAddr[0] + (CVI_U64)vf.u32Stride[0] * vf.u32Height;
++            if (uv_len == 0 && vf.u32Stride[0] != 0)
++                uv_len = vf.u32Stride[0] * vf.u32Height / 2;
++            vf.pu8VirAddr[1] = (CVI_U8*)raw_map_plane(uv_phy, uv_len);
++        }
++    }
++    else
+     {
+         const VIDEO_FRAME_S& vf = stFrameInfo_bgr.stVFrame;
+ 
+@@ -3863,7 +3958,7 @@ int capture_cvi_impl::read_frame(unsigned char* bgrdata)
+         // fprintf(stderr, "border %d %d %d %d\n", border_top, border_bottom, border_left, border_right);
+ 
+         void* mapped_ptr = CVI_SYS_MmapCache(phyaddr, length);
+-        //CVI_SYS_IonInvalidateCache(phyaddr, mapped_ptr, length);
++        CVI_SYS_IonInvalidateCache(phyaddr, mapped_ptr, length);
+ 
+         const unsigned char* ptr = (const unsigned char*)mapped_ptr + border_top * stride + border_left;
+ 
+@@ -3911,7 +4006,12 @@ int capture_cvi_impl::read_frame(unsigned char* bgrdata)
+         CVI_SYS_Munmap(mapped_ptr, length);
+     }
+ 
+-OUT:
++    OUT:
++
++    if (b_frame_held)
++    {
++        return ret_val;
++    }
+ 
+     if (b_vpss_frame_got)
+     {
+@@ -3940,10 +4040,100 @@ OUT:
+     return ret_val;
+ }
+ 
++void* capture_cvi_impl::raw_frame()
++{
++    return b_frame_held ? (void*)&stFrameInfo : (void*)0;
++}
++
++void* capture_cvi_impl::raw_bgr_frame()
++{
++    return b_frame_held ? (void*)&stFrameInfo_bgr : (void*)0;
++}
++
++int capture_cvi_impl::capture(unsigned char* bgrdata)
++{
++    /* Read, but do not release: the caller owns the frames until it calls
++       release_image_ptr(). */
++    b_frame_held = 1;
++    int ret = read_frame(bgrdata);
++    if (ret != 0)
++    {
++        b_frame_held = 0;
++    }
++    return ret;
++}
++
++void capture_cvi_impl::raw_unmap_all()
++{
++    for (int i = 0; i < raw_map_count; i++)
++    {
++        CVI_SYS_Munmap(raw_maps[i].va, raw_maps[i].len);
++        raw_maps[i].phy = 0;
++        raw_maps[i].va = NULL;
++        raw_maps[i].len = 0;
++    }
++    raw_map_count = 0;
++}
++
++/* Map a plane (or hand back the cached mapping) and re-sync the cache with
++   what the DMA engine just wrote. Returns NULL when the address is unusable,
++   which the caller treats as an empty frame. */
++void* capture_cvi_impl::raw_map_plane(CVI_U64 phy, CVI_U32 len)
++{
++    if (phy == 0 || len == 0) return NULL;
++
++    for (int i = 0; i < raw_map_count; i++)
++    {
++        if (raw_maps[i].phy == phy)
++        {
++            CVI_SYS_IonInvalidateCache(phy, raw_maps[i].va, len);
++            return raw_maps[i].va;
++        }
++    }
++
++    void* p = CVI_SYS_MmapCache(phy, len);
++    if (p == NULL) return NULL;
++
++    CVI_SYS_IonInvalidateCache(phy, p, len);
++
++    if (raw_map_count < kRawMapMax)
++    {
++        raw_maps[raw_map_count].phy = phy;
++        raw_maps[raw_map_count].va = p;
++        raw_maps[raw_map_count].len = len;
++        raw_map_count++;
++    }
++
++    return p;
++}
++
++int capture_cvi_impl::release_image_ptr()
++{
++    if (!b_frame_held)
++    {
++        return -1;
++    }
++
++    b_frame_held = 0;
++
++    if (b_vpss_frame_got)
++    {
++        CVI_VPSS_ReleaseChnFrame(VpssGrp, VpssChn, &stFrameInfo_bgr);
++        b_vpss_frame_got = 0;
++    }
++
++    if (b_vi_frame_got)
++    {
++        CVI_VI_ReleaseChnFrame(ViPipe, ViChn, &stFrameInfo);
++        b_vi_frame_got = 0;
++    }
++
++    return 0;
++}
++
+ int capture_cvi_impl::stop_streaming()
+ {
+     int ret_val = 0;
+-
+     if (b_vpss_grp_started)
+     {
+         CVI_S32 ret = CVI_VPSS_StopGrp(VpssGrp);
+@@ -4296,6 +4486,9 @@ int capture_cvi_impl::close()
+     // VpssGrp = CVI_VPSS_GetAvailableGrp();
+     VpssChn = VPSS_CHN0;
+ 
++    /* The raw-mode plane mappings live until now. */
++    raw_unmap_all();
++
+     return ret_val;
+ }
+ 
+@@ -4351,6 +4544,26 @@ int capture_cvi::read_frame(unsigned char* bgrdata)
+     return d->read_frame(bgrdata);
+ }
+ 
++int capture_cvi::capture(unsigned char* bgrdata)
++{
++    return d->capture(bgrdata);
++}
++
++int capture_cvi::release_image_ptr()
++{
++    return d->release_image_ptr();
++}
++
++void* capture_cvi::raw_frame()
++{
++    return d->raw_frame();
++}
++
++void* capture_cvi::raw_bgr_frame()
++{
++    return d->raw_bgr_frame();
++}
++
+ int capture_cvi::stop_streaming()
+ {
+     return d->stop_streaming();
+diff --git a/opencv-mobile-4.13.0/modules/highgui/src/capture_cvi.h b/opencv-mobile-4.13.0/modules/highgui/src/capture_cvi.h
+index e112912..025e203 100644
+--- a/opencv-mobile-4.13.0/modules/highgui/src/capture_cvi.h
++++ b/opencv-mobile-4.13.0/modules/highgui/src/capture_cvi.h
+@@ -40,6 +40,20 @@ public:
+ 
+     int read_frame(unsigned char* bgrdata);
+ 
++    /* Reads a frame like read_frame() but keeps the raw VI frame alive so the
++       caller can feed the same pixels to a NPU via VIDEO_FRAME_INFO_S.
++       Returns 0 on success; -1 if no frame is held afterwards. */
++    int capture(unsigned char* bgrdata);
++
++    /* Releases the frame retained by capture(). */
++    int release_image_ptr();
++
++    /* Raw frames currently held by capture(): the VI frame in the
++       VIDEO_FRAME_INFO_S layout (feed this to the NPU) and the converted BGR
++       one. Both are owned by this object and valid until release_image_ptr(). */
++    void* raw_frame();
++    void* raw_bgr_frame();
++
+     int stop_streaming();
+ 
+     int close();
+diff --git a/opencv-mobile-4.13.0/modules/highgui/src/videocapture.cpp b/opencv-mobile-4.13.0/modules/highgui/src/videocapture.cpp
+index 3ce3dc9..671c427 100644
+--- a/opencv-mobile-4.13.0/modules/highgui/src/videocapture.cpp
++++ b/opencv-mobile-4.13.0/modules/highgui/src/videocapture.cpp
+@@ -19,6 +19,7 @@
+ 
+ #include <stdio.h>
+ #include <string.h>
++#include <utility>
+ 
+ #if CV_WITH_CVI
+ #include "capture_cvi.h"
+@@ -286,6 +287,41 @@ VideoCapture& VideoCapture::operator>>(Mat& image)
+     return *this;
+ }
+ 
++std::pair<void*, void*> VideoCapture::capture(Mat& image)
++{
++    std::pair<void*, void*> ret((void*)0, (void*)0);
++
++    if (!d->is_opened)
++        return ret;
++
++#if CV_WITH_CVI
++    if (capture_cvi::supported())
++    {
++        image.create(d->height, d->width, CV_8UC3);
++
++        int retVal = d->cap_cvi.capture((unsigned char*)image.data);
++        if (retVal != 0)
++        {
++            return ret;
++        }
++
++        ret.first = d->cap_cvi.raw_frame();
++        ret.second = d->cap_cvi.raw_bgr_frame();
++    }
++#endif
++    return ret;
++}
++
++void VideoCapture::releaseImagePtr()
++{
++#if CV_WITH_CVI
++    if (capture_cvi::supported())
++    {
++        d->cap_cvi.release_image_ptr();
++    }
++#endif
++}
++
+ bool VideoCapture::set(int propId, double value)
+ {
+     if (propId == CAP_PROP_FRAME_WIDTH)
