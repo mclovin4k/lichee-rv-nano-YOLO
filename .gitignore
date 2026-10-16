@@ -4,3 +4,4 @@ capture_test/libs/
 yolo_stream/libs/
 *.o
 *.log
+yolo_stream/archive/

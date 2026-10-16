@@ -8,14 +8,17 @@
 
    The detector runs on its own thread. The known platform defect (cvi-tpu
    "run dmabuf timeout") blocks a forward for ~60 s once it fires; with the
-   split, the capture/encode/HTTP thread keeps streaming at capture rate and
-   simply redraws the last known boxes, whose age is printed in the stats.
-   The detector drops and re-registers the model by itself after each stall
-   (see yolo8.c), so the wedge costs boxes, not the stream. */
+   split, the capture/encode/HTTP thread keeps streaming at capture rate.
+   The stream never shows boxes for a scene that has moved on: results whose
+   frame went stale while the driver held the forward are dropped, boxes older
+   than SY_BOX_TTL_MS are not drawn ("no det Ns" appears instead), and the
+   detector re-registers the model by itself after each stall (see yolo8.c).
+   So the wedge costs boxes for a while, not the stream. */
 
 #include "MJPEGWriter.h"
 #include "draw_nv21.h"
 #include "venc_jpeg.h"
+#include "vpss_det.h"
 #include "yolo.hpp"
 
 #include <signal.h>
@@ -34,6 +37,12 @@
 
 #include <cvi_sys.h>
 #include <linux/cvi_comm_video.h>
+
+/* Overlay palette: sample_vi_detection draws blue boxes/labels; in full-range
+   NV21 that blue is (Y, U, V) = (41, 240, 110). */
+#define OVERLAY_Y 41
+#define OVERLAY_U 240
+#define OVERLAY_V 110
 
 static volatile sig_atomic_t interrupted = 0;
 
@@ -67,6 +76,8 @@ struct Stage {
     std::vector<uint8_t> buf;
     uint32_t stride = 0;
     int w = 0, h = 0;
+    double t_copy = 0;   /* mono_ms() at the copy: results older than the
+                            freshness window are dropped, not published */
     bool fresh = false;  /* a frame is waiting */
     bool busy = false;   /* the detector is running */
     bool quit = false;
@@ -78,6 +89,7 @@ struct BoxSlot {
     std::mutex m;
     std::vector<DetBox> boxes;
     long generation = 0;
+    double last_pub_ms = 0;  /* when the boxes were published (0 = never) */
 };
 
 int main(int argc, char *argv[]) {
@@ -85,20 +97,29 @@ int main(int argc, char *argv[]) {
     signal(SIGTERM, interrupt_handler);
 
     if (argc < 4) {
-        printf("Usage: ./stream_yolo <model_file_path> <class_cnt> <frame_size>\n");
+        printf("Usage: ./stream_yolo <model_file_path> <class_cnt|auto> <width> [height]\n");
         return 0;
     }
 
     const char *model_path = argv[1];
-    const int class_cnt = atoi(argv[2]);
-    const int frame_size = atoi(argv[3]);
+    /* "auto" (or a non-number) lets the model's class branches decide how
+       many classes it has -- the menu script uses this for every model. */
+    const int class_cnt = (strcmp(argv[2], "auto") == 0) ? 0 : atoi(argv[2]);
+    /* Stream geometry -- one size for the VPSS frame, the NPU letterbox and
+       the box overlay, e.g. "80 960 540" (the reference sample's frame). */
+    const int cam_w = atoi(argv[3]);
+    const int cam_h = (argc >= 5) ? atoi(argv[4]) : cam_w;
+    if (cam_w <= 0 || cam_h <= 0) {
+        printf("bad frame size %dx%d\n", cam_w, cam_h);
+        return -1;
+    }
 
     /* Offline detector check: run one 640x640 NV21 frame from a file through
        the same infer path the camera feeds, then exit. Used to compare the
        decode against the reference implementation on identical pixels. */
     const char *test_nv21 = getenv("SY_TEST_NV21");
     if (test_nv21 != NULL) {
-        const uint32_t tw = (uint32_t)frame_size, th = (uint32_t)frame_size;
+        const uint32_t tw = (uint32_t)cam_w, th = (uint32_t)cam_h;
         const size_t y_len = (size_t)tw * th;
         FILE *tf = fopen(test_nv21, "rb");
         if (tf == NULL) {
@@ -133,8 +154,8 @@ int main(int argc, char *argv[]) {
     setenv("OPENCV_CVI_RAW", "1", 0);
 
     cv::VideoCapture cap;
-    cap.set(cv::CAP_PROP_FRAME_WIDTH, frame_size);
-    cap.set(cv::CAP_PROP_FRAME_HEIGHT, frame_size);
+    cap.set(cv::CAP_PROP_FRAME_WIDTH, cam_w);
+    cap.set(cv::CAP_PROP_FRAME_HEIGHT, cam_h);
     cap.open(0);
 
     if (!cap.isOpened()) {
@@ -142,10 +163,38 @@ int main(int argc, char *argv[]) {
         return -1;
     }
 
+    /* Score threshold: 0.5 by default; the TDL reference samples run 0.2-0.5,
+       a lower threshold also shows weak detections. */
+    double det_thr = 0.5;
+    {
+        const char *e = getenv("SY_DET_THR");
+        if (e != NULL && atof(e) > 0.0) det_thr = atof(e);
+    }
+
     YoloModelDetector detector;
-    if (detector.setup_model(model_path, class_cnt, 0.5, 0.5) < 0) {
+    if (detector.setup_model(model_path, class_cnt, det_thr, 0.5) < 0) {
         printf("Failed to setup model %s\n", model_path);
         return -1;
+    }
+
+    /* Detection input path. The VPSS can hand the detector a ready int8
+       letterboxed tensor (resize, colour conversion and normalisation all in
+       hardware), which removes the ~145 ms CPU preprocess that capped the
+       detector near 3 fps. The channel is added to the capture pipeline's
+       group, so the camera must already be open. SY_DET_VPSS=0 pins the CPU
+       path; should the channel stop delivering frames, the detector falls
+       back to it by itself at runtime. */
+    std::atomic<bool> det_vpss_mode(false);
+    {
+        const char *e = getenv("SY_DET_VPSS");
+        const bool want = !(e != NULL && e[0] == '0');
+        if (want && vpss_det_open(detector.input_w(), detector.input_h(), detector.input_qscale(),
+                                  cam_w, cam_h) == 0) {
+            det_vpss_mode.store(true);
+        } else if (want) {
+            printf("det: VPSS input unavailable, using the CPU NV21 preprocess\n");
+            fflush(stdout);
+        }
     }
 
     // Warmup: let AE/AWB settle, drop first frames (no inference yet).
@@ -156,11 +205,11 @@ int main(int argc, char *argv[]) {
     }
 
     // Hardware JPEG for the stream: cv::imencode on this CPU starves the TPU.
-    if (venc_jpeg_init(frame_size, frame_size, 75) != 0) {
+    if (venc_jpeg_init(cam_w, cam_h, 75) != 0) {
         printf("venc_jpeg init failed\n");
         return -1;
     }
-    std::vector<uint8_t> jbuf(1 << 20);
+    std::vector<uint8_t> jbuf(2 << 20);
 
     Stage st;
     BoxSlot slot;
@@ -169,7 +218,10 @@ int main(int argc, char *argv[]) {
        bisect the platform's TPU wedge against the stream load without a
        rebuild: SY_STREAM_FPS throttles the capture/encode loop, SY_ENC_EVERY
        encodes every N-th frame, SY_DRAW=0 skips drawing, SY_DET=0 skips the
-       detector thread entirely. */
+       detector thread entirely. Freshness: SY_DET_MAX_AGE_MS drops results
+       whose frame is older than that at publish time (the wedged forward
+       returns seconds to minutes late); SY_BOX_TTL_MS hides drawn boxes once
+       they are that old (0 = keep drawing them forever). */
     int stream_fps = 0;
     int enc_every = 1;
     int enc_on = 1;
@@ -177,6 +229,8 @@ int main(int argc, char *argv[]) {
     int det_on = 1;
     int wedge_ms = 0;
     int wedge_reboot = 0;
+    int det_max_age_ms = 2000;
+    int box_ttl_ms = 4000;
     {
         const char *e = getenv("SY_STREAM_FPS");
         if (e != NULL) stream_fps = atoi(e);
@@ -192,33 +246,32 @@ int main(int argc, char *argv[]) {
         if (e != NULL && atoi(e) > 0) wedge_ms = atoi(e);
         e = getenv("SY_WEDGE_REBOOT");
         if (e != NULL && e[0] == '1') wedge_reboot = 1;
+        e = getenv("SY_DET_MAX_AGE_MS");
+        if (e != NULL && atoi(e) > 0) det_max_age_ms = atoi(e);
+        e = getenv("SY_BOX_TTL_MS");
+        if (e != NULL && atoi(e) >= 0) box_ttl_ms = atoi(e);
     }
     const double frame_period_ms = (stream_fps > 0) ? 1000.0 / stream_fps : 0.0;
     double next_frame_at = 0;
-    printf("knobs: fps=%d enc_every=%d enc=%d draw=%d det=%d wedge_ms=%d wedge_reboot=%d\n", stream_fps,
-           enc_every, enc_on, draw_on, det_on, wedge_ms, wedge_reboot);
+    printf("knobs: fps=%d enc_every=%d enc=%d draw=%d det=%d wedge_ms=%d wedge_reboot=%d thr=%.2f "
+           "det_max_age=%dms box_ttl=%dms\n",
+           stream_fps, enc_every, enc_on, draw_on, det_on, wedge_ms, wedge_reboot, det_thr,
+           det_max_age_ms, box_ttl_ms);
 
     std::thread det_thread;
     if (det_on) {
         det_thread = std::thread([&]() {
         long stalls = 0;
-        while (true) {
-            std::unique_lock<std::mutex> lk(st.m);
-            st.cv.wait(lk, [&] { return st.fresh || st.quit; });
-            if (st.quit) break;
-            st.busy = true;
-            st.fresh = false;
-            lk.unlock();
-
-            std::vector<DetBox> out;
-            int rc = detector.detect_nv21(st.buf.data(), st.buf.data() + (size_t)st.stride * st.h,
-                                          st.w, st.h, st.stride, out);
+        /* One result, one place for what to do with it: reopen after a stall,
+           publish fresh boxes, or reject a result the driver held for so long
+           that its scene is gone. */
+        auto handle = [&](int rc, std::vector<DetBox> &out, double frame_age_ms) {
             if (rc == -2) {
                 stalls++;
                 printf("detector stall #%ld, reopening model\n", stalls);
                 fflush(stdout);
-                detector.setup_model(model_path, class_cnt, 0.5, 0.5);
-            } else if (rc == 0) {
+                detector.setup_model(model_path, class_cnt, det_thr, 0.5);
+            } else if (rc == 0 && frame_age_ms <= (double)det_max_age_ms) {
                 /* Per-detection log line: class, score and box for every
                    published frame; handy for comparing against the TDL
                    reference sample on the same scene. */
@@ -234,18 +287,78 @@ int main(int argc, char *argv[]) {
                 std::lock_guard<std::mutex> bl(slot.m);
                 slot.boxes = out;
                 slot.generation++;
+                slot.last_pub_ms = mono_ms();
+            } else if (rc == 0) {
+                /* The driver held the forward through the whole wedge; the
+                   frame it returned is seconds to minutes old. Publishing its
+                   boxes would draw on the current scene a result of a scene
+                   that is gone. */
+                printf("det: dropped stale result (frame age %.1fs)\n", frame_age_ms / 1000.0);
+                fflush(stdout);
+            }
+        };
+
+        int vpss_quiet = 0;
+        while (true) {
+            std::vector<DetBox> out;
+            double frame_age_ms = 0;
+            int rc;
+
+            if (det_vpss_mode.load()) {
+                /* The capture thread drives the group and the VPSS writes the
+                   model input; the detector only takes the newest frame. A
+                   slow or stalled forward no longer loses the pipeline: the
+                   next frame is already waiting. */
+                const double t_got = mono_ms();
+                rc = detector.detect_vpss(cam_w, cam_h, 200, out);
+                if (rc == -3) {
+                    /* No frame at all: either a pipeline lull, or the channel
+                       is not being serviced. After ~5 s of silence give up on
+                       it and go back to the CPU preprocess for good. */
+                    std::lock_guard<std::mutex> lk(st.m);
+                    if (st.quit) break;
+                    if (++vpss_quiet >= 25) {
+                        vpss_quiet = 0;
+                        printf("det: no VPSS frames for 5s, falling back to the CPU preprocess\n");
+                        fflush(stdout);
+                        det_vpss_mode.store(false);
+                    }
+                    continue;
+                }
+                vpss_quiet = 0;
+                frame_age_ms = mono_ms() - t_got;
+            } else {
+                std::unique_lock<std::mutex> lk(st.m);
+                st.cv.wait(lk, [&] { return st.fresh || st.quit; });
+                if (st.quit) break;
+                st.busy = true;
+                st.fresh = false;
+                const double t_copy = st.t_copy;
+                lk.unlock();
+
+                rc = detector.detect_nv21(st.buf.data(), st.buf.data() + (size_t)st.stride * st.h,
+                                          st.w, st.h, st.stride, out);
+                frame_age_ms = mono_ms() - t_copy;
+
+                lk.lock();
+                st.busy = false;
+                lk.unlock();
             }
 
-            lk.lock();
-            st.busy = false;
-            lk.unlock();
+            handle(rc, out, frame_age_ms);
         }
         });
     }
 
     MJPEGWriter mjpeg(7777);
     mjpeg.start();
-    printf("MJPEG on :7777, model %s (%d classes), raw NV21 pipeline\n", model_path, class_cnt);
+    char clsbuf[32];
+    if (class_cnt > 0)
+        snprintf(clsbuf, sizeof(clsbuf), "%d classes", class_cnt);
+    else
+        snprintf(clsbuf, sizeof(clsbuf), "auto classes");
+    printf("MJPEG on :7777, model %s (%s), raw NV21 pipeline %dx%d\n", model_path, clsbuf, cam_w,
+           cam_h);
     fflush(stdout);
 
     int fails = 0;
@@ -296,7 +409,8 @@ int main(int argc, char *argv[]) {
         }
 
         // Hand a copy of the frame to the detector, but only when it is idle.
-        {
+        // (Not in hardware-input mode: the detector reads the VPSS channel.)
+        if (!det_vpss_mode.load()) {
             std::unique_lock<std::mutex> lk(st.m, std::try_to_lock);
             if (lk.owns_lock() && !st.busy && !st.fresh) {
                 const size_t y_len = (size_t)stride * h;
@@ -310,6 +424,7 @@ int main(int argc, char *argv[]) {
                 st.stride = stride;
                 st.w = w;
                 st.h = h;
+                st.t_copy = mono_ms();
                 st.fresh = true;
                 st.cv.notify_one();
             }
@@ -349,14 +464,33 @@ int main(int argc, char *argv[]) {
 
         if (enc_on && ((frames % enc_every) == 0)) {
             if (draw_on) {
-                for (size_t i = 0; i < boxes.size(); i++) {
-                    const DetBox &d = boxes[i];
-                    nv21_draw_rect(yp, uvp, stride, w, h, (int)d.x1, (int)d.y1, (int)d.x2, (int)d.y2,
-                                   2, 145, 54, 34);
-                    char label[64];
-                    snprintf(label, sizeof(label), "%d: %.2f", d.cls, d.score);
-                    int ty = (d.y1 > 32) ? (int)d.y1 - 16 : (int)d.y2 + 4;
-                    nv21_draw_text(yp, uvp, stride, w, h, (int)d.x1, ty, label, 2, 145, 54, 34);
+                /* Boxes older than the TTL are not drawn: during a TPU wedge the
+                   scene keeps moving while the detector is silent, and a frozen
+                   box would point where its object no longer is. The HUD line
+                   tells the viewer that the detector, not the stream, waits. */
+                const bool boxes_fresh = (box_ttl_ms <= 0) || (idle_ms < (double)box_ttl_ms);
+                if (boxes_fresh) {
+                    for (size_t i = 0; i < boxes.size(); i++) {
+                        const DetBox &d = boxes[i];
+                        nv21_draw_rect(yp, uvp, stride, w, h, (int)d.x1, (int)d.y1, (int)d.x2,
+                                       (int)d.y2, 3, OVERLAY_Y, OVERLAY_U, OVERLAY_V);
+                        char label[64];
+                        snprintf(label, sizeof(label), "class:%d score:%.2f", d.cls, d.score);
+                        const int tscale = 4;
+                        int twid = (int)strlen(label) * 6 * tscale;
+                        int tx = (int)d.x1;
+                        if (tx + twid > w) tx = w - twid;
+                        if (tx < 0) tx = 0;
+                        int ty = (int)d.y1 - 7 * tscale - 4;
+                        if (ty < 0) ty = (int)d.y2 + 4;
+                        if (ty + 7 * tscale > h) ty = h - 7 * tscale;
+                        nv21_draw_text(yp, uvp, stride, w, h, tx, ty, label, tscale, OVERLAY_Y, OVERLAY_U,
+                                       OVERLAY_V);
+                    }
+                } else if (det_on) {
+                    char hud[48];
+                    snprintf(hud, sizeof(hud), "no det %.0fs", idle_ms / 1000.0);
+                    nv21_draw_text(yp, uvp, stride, w, h, 8, 34, hud, 4, OVERLAY_Y, OVERLAY_U, OVERLAY_V);
                 }
 
                 // The codec reads the physical buffer: make the drawn pixels visible.
@@ -390,8 +524,10 @@ int main(int argc, char *argv[]) {
                 }
                 if (last_gen_t > 0) { gen_age = (now_t - last_gen_t) / cv::getTickFrequency(); }
             }
-            printf("[stream] frames=%ld fps=%.1f det=%.1fms boxes=%zu det_age=%.1fs\n", frames,
-                   30.0 / (dt > 0 ? dt : 1), detector.avg_ms(), boxes.size(), gen_age);
+            printf("[stream] frames=%ld fps=%.1f det=%.1fms (prep=%.1f fwd=%.1f dec=%.1f) boxes=%zu "
+                   "det_age=%.1fs\n",
+                   frames, 30.0 / (dt > 0 ? dt : 1), detector.avg_ms(), detector.prep_ms(),
+                   detector.fwd_ms(), detector.dec_ms(), boxes.size(), gen_age);
             fflush(stdout);
             t0 = now_t;
         }
@@ -419,6 +555,7 @@ int main(int argc, char *argv[]) {
            timeout releases the thread by itself. */
         printf("detector thread stuck in the kernel, exiting without join\n");
         fflush(stdout);
+        vpss_det_close();
         cap.release();
         _exit(0);
     }
@@ -429,6 +566,10 @@ int main(int argc, char *argv[]) {
         st.cv.notify_all();
     }
     if (det_thread.joinable()) det_thread.join();
+
+    /* The detection channel goes first: it lives on the capture group, which
+       cap.release() tears down. */
+    vpss_det_close();
 
     venc_jpeg_deinit();
     cap.release();

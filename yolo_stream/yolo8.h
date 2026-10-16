@@ -10,9 +10,10 @@
 extern "C" {
 #endif
 
-/* Bounded wait for one forward. Comfortably above a normal inference (~20 ms)
-   and far below the driver's fixed 2000 ms, so a stall is ours to handle
-   rather than something the process sits through. */
+/* Bounded wait for one forward. Comfortably above a normal inference (~40 ms)
+   and below the driver's completion timeout (1 s with the patched soph_tpu),
+   so a stall is ours to handle rather than something the process sits
+   through. */
 #define YOLO8_FORWARD_DEADLINE_MS 800
 
 void nv_yolo8_set_stretch(int stretch);
@@ -45,8 +46,25 @@ typedef struct {
   float threshold;
   float nms_iou;
 
+  /* The class branches' sigmoid, precomputed per branch: the decode feeds it
+     quantised int8, i.e. one of 256 values, so a table replaces the expf()
+     calls that used to dominate the postprocess (8400 cells x 80 classes). */
+  float sig_lut[3][256];
+
+  /* Per-cell scratch for the class scan, sized to the largest branch. */
+  int8_t *scratch_q;
+  uint8_t *scratch_c;
+  float *scratch_f; /* float sibling, for the fp32-output exports */
+  int scratch_cells;
+
+  /* Some exports (head_hardhat, fire_smoke, traffic_light) leave the outputs
+     unquantised: fmt FP32 and the quant scale reads 1.0. The decode reads
+     those branches as floats; out_fp32[i] picks the path per branch. */
+  int out_fp32[6];
+
   /* diagnostics */
   double avg_ms, worst_ms;
+  double avg_prep, avg_fwd, avg_dec; /* rolling phase costs (ms) */
   long stalls, reloads;
   float in_qscale;
   int in_zero;
@@ -80,6 +98,13 @@ int nv_yolo8_infer(nv_yolo8_t *y, const uint8_t *y_plane, const uint8_t *uv_plan
    e.g. from a VPSS channel emitting PIXEL_FORMAT_BGR_888). */
 int nv_yolo8_infer_bgr(nv_yolo8_t *y, const uint8_t *bgr, uint32_t stride, int cam_w, int cam_h,
                        nv_yolo8_det_t *dets, int max_out, int *n_out);
+
+/* Same again but with the tensor already filled by the caller (the VPSS
+   hardware-input path copies its planes into y->in_ptr). prep_ms is that
+   copy's cost, folded into the phase statistics; the decode geometry takes
+   the camera dimensions as usual. */
+int nv_yolo8_infer_filled(nv_yolo8_t *y, int cam_w, int cam_h, double prep_ms,
+                          nv_yolo8_det_t *dets, int max_out, int *n_out);
 
 #ifdef __cplusplus
 }

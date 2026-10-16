@@ -65,10 +65,6 @@ static inline int clamp_q(float v) {
   return q;
 }
 
-static inline float sigmoidf_u8(int32_t q, int32_t zero, float scale) {
-  return 1.0f / (1.0f + expf(-((float)q - (float)zero) * scale));
-}
-
 /* ---- open / close ------------------------------------------------------- */
 
 int nv_yolo8_open(nv_yolo8_t *y, const char *model_path, int num_classes, float threshold,
@@ -130,6 +126,62 @@ int nv_yolo8_open(nv_yolo8_t *y, const char *model_path, int num_classes, float 
        decode grid without changing the number of candidates examined. */
     y->out_h[i] = (int)o.dim[2];
     y->out_w[i] = (int)o.dim[3];
+    y->out_fp32[i] = (out[i].fmt == CVI_FMT_FP32);
+  }
+
+  /* Identify the head and, when the caller asked for "auto" (cnt <= 0), take
+     the class count from the tensor instead of guessing. Every YOLOv8 det
+     export shares this skeleton: three box branches of 4x16 DFL channels and
+     three class branches of one channel per class. Anything else (SCRFD,
+     keypoints, classifiers) fails here with a clear message instead of
+     decoding noise. */
+  if (y->out_ch[0] != 64 || y->out_ch[1] != 64 || y->out_ch[2] != 64 || y->out_ch[3] <= 0 ||
+      y->out_ch[4] != y->out_ch[3] || y->out_ch[5] != y->out_ch[3]) {
+    fprintf(stderr, "yolo8: not a YOLOv8 det head (box ch %d/%d/%d, cls ch %d/%d/%d)\n",
+            y->out_ch[0], y->out_ch[1], y->out_ch[2], y->out_ch[3], y->out_ch[4], y->out_ch[5]);
+    return -1;
+  }
+  if (y->out_fp32[0] != y->out_fp32[3] || y->out_fp32[1] != y->out_fp32[4] ||
+      y->out_fp32[2] != y->out_fp32[5]) {
+    fprintf(stderr, "yolo8: box and cls branches disagree on the output format\n");
+    return -1;
+  }
+  if (num_classes <= 0) {
+    num_classes = (int)y->out_ch[3];
+    printf("yolo8: auto-detect: %d classes from the tensor\n", num_classes);
+  } else if (num_classes != (int)y->out_ch[3]) {
+    fprintf(stderr, "yolo8: warning: %d classes requested, tensor has %d\n", num_classes,
+            (int)y->out_ch[3]);
+  }
+  y->num_classes = num_classes;
+
+  /* The class-branch sigmoid: its argument is a quantised int8, so all 256
+     outputs are a table built once here. The decode visits 8400 cells x 80
+     classes per frame; an expf() for every one of those was the postprocess. */
+  for (int b = 0; b < 3; b++) {
+    const float zc = (float)y->out_zero[b + 3];
+    const float qc = y->out_q[b + 3];
+    for (int q = -128; q <= 127; q++)
+      y->sig_lut[b][q + 128] = 1.0f / (1.0f + expf(-(((float)q - zc) * qc)));
+  }
+
+  /* Scratch for the per-cell class scan, sized to the largest branch. */
+  for (int i = 0; i < 3; i++) {
+    const int c = y->out_w[i] * y->out_h[i];
+    if (c > y->scratch_cells) y->scratch_cells = c;
+  }
+  y->scratch_q = malloc((size_t)y->scratch_cells);
+  y->scratch_c = malloc((size_t)y->scratch_cells);
+  if (y->scratch_q == NULL || y->scratch_c == NULL) {
+    fprintf(stderr, "yolo8: no memory for the decode scratch\n");
+    return -1;
+  }
+  if (y->out_fp32[0] || y->out_fp32[1] || y->out_fp32[2]) {
+    y->scratch_f = malloc((size_t)y->scratch_cells * sizeof(float));
+    if (y->scratch_f == NULL) {
+      fprintf(stderr, "yolo8: no memory for the float decode scratch\n");
+      return -1;
+    }
   }
 
   /* Infer the letterbox geometry for a given camera frame. */
@@ -144,9 +196,16 @@ int nv_yolo8_open(nv_yolo8_t *y, const char *model_path, int num_classes, float 
   printf("yolo8: input tensor ptr=%p size=%zu qscale=%f zero=%d\n", (void *)y->in_ptr, y->in_size,
          y->in_qscale, y->in_zero);
   for (int i = 0; i < 3; i++) {
-    printf("yolo8:   scale %d: box %dx%d q=%.6f z=%d | cls %dx%d q=%.6f z=%d\n", i, y->out_ch[i],
-           y->out_h[i], y->out_q[i], y->out_zero[i], y->out_ch[i + 3], y->out_h[i + 3],
-           y->out_q[i + 3], y->out_zero[i + 3]);
+    /* bytes per element tells int8 (1) from fp32 (4) -- the three shipped
+       exports whose quant scale reads 1.0 are the fp32-output ones. */
+    const size_t bz = CVI_NN_TensorSize(&out[i]);
+    const size_t cz = CVI_NN_TensorSize(&out[i + 3]);
+    const size_t be = (size_t)y->out_ch[i] * y->out_h[i] * y->out_w[i];
+    const size_t ce = (size_t)y->out_ch[i + 3] * y->out_h[i + 3] * y->out_w[i + 3];
+    printf("yolo8:   scale %d: box %dx%d esz=%.1f q=%.6f z=%d | cls %dx%d esz=%.1f q=%.6f z=%d\n", i,
+           y->out_ch[i], y->out_h[i], be ? (double)bz / (double)be : -1.0, y->out_q[i],
+           y->out_zero[i], y->out_ch[i + 3], y->out_h[i + 3],
+           ce ? (double)cz / (double)ce : -1.0, y->out_q[i + 3], y->out_zero[i + 3]);
   }
   return 0;
 }
@@ -154,6 +213,9 @@ int nv_yolo8_open(nv_yolo8_t *y, const char *model_path, int num_classes, float 
 void nv_yolo8_close(nv_yolo8_t *y) {
   if (y->model != NULL) CVI_NN_CleanupModel(y->model);
   free(y->in_rgb);
+  free(y->scratch_q);
+  free(y->scratch_c);
+  free(y->scratch_f);
   memset(y, 0, sizeof(*y));
 }
 
@@ -393,6 +455,43 @@ static float dfl_dist(const int8_t *box, int stride, int idx, int bh, int bw, in
   return d * (float)stride;
 }
 
+/* The same distribution read from an unquantised (fp32) box branch: the raw
+   values already are the logits the softmax above dequantises to. */
+static float dfl_dist_f(const float *box, int stride, int idx, int bh, int bw, int gx, int gy,
+                        int bins) {
+  float mx = -1e30f, sum = 0.0f;
+  float p[32];
+  const float *v = box + (size_t)idx * (size_t)bins * (size_t)bh * (size_t)bw;
+  for (int b = 0; b < bins; b++) {
+    const float q = v[((size_t)b * bh + gy) * bw + gx];
+    p[b] = q;
+    if (q > mx) mx = q;
+  }
+  for (int b = 0; b < bins; b++) {
+    p[b] = expf(p[b] - mx);
+    sum += p[b];
+  }
+  float d = 0.0f;
+  for (int b = 0; b < bins; b++) d += (p[b] / sum) * (float)b;
+  return d * (float)stride;
+}
+
+/* Shared tail of both decode paths: cell-relative distances -> one NMS
+   candidate (tmp[] in decode() holds 512). */
+static int push_det(det_t *tmp, int n, float cx, float cy, float l, float t, float r, float b,
+                    float s, int cls, int pad_x, int pad_y, float kx, float ky) {
+  if (n < 512) {
+    tmp[n].x1 = (cx - l - (float)pad_x) / kx;
+    tmp[n].y1 = (cy - t - (float)pad_y) / ky;
+    tmp[n].x2 = (cx + r - (float)pad_x) / kx;
+    tmp[n].y2 = (cy + b - (float)pad_y) / ky;
+    tmp[n].score = s;
+    tmp[n].cls = cls;
+    n++;
+  }
+  return n;
+}
+
 /* Decode the 3 box + 3 cls branches into frame coordinates and NMS them. */
 static int decode(nv_yolo8_t *y, int cam_w, int cam_h, nv_yolo8_det_t *out, int max_out) {
   /* Same mapping preprocess() used, via geom(). The previous revision derived
@@ -403,7 +502,9 @@ static int decode(nv_yolo8_t *y, int cam_w, int cam_h, nv_yolo8_det_t *out, int 
 
   det_t tmp[512];
   int n = 0;
-  float gmax = 0.0f;
+  /* Per-branch best raw class score, for last_max_score. */
+  int bmax_q[3] = {-128, -128, -128};
+  float bmax_f[3] = {-1e30f, -1e30f, -1e30f};
 
   for (int b = 0; b < 3; b++) {
     const int bw = y->out_w[b], bh = y->out_h[b];
@@ -415,55 +516,102 @@ static int decode(nv_yolo8_t *y, int cam_w, int cam_h, nv_yolo8_det_t *out, int 
        (7 for person_vehicle). Requiring them to be equal skipped all three
        branches of every 7-class detector, which is why nothing was ever
        found no matter what went into the tensor. */
-    const int8_t *box = y->out_ptr[b];
-    const int8_t *cls = y->out_ptr[b + 3];
-    const float qb = y->out_q[b], qc = y->out_q[b + 3];
-    const int zb = y->out_zero[b], zc = y->out_zero[b + 3];
+    const int cells = bw * bh;
+    if (cells > y->scratch_cells) continue;
+    uint8_t *bestc = y->scratch_c;
+    memset(bestc, 0, (size_t)cells);
 
-    for (int gy = 0; gy < bh; gy++) {
-      for (int gx = 0; gx < bw; gx++) {
-        int best_cls = -1;
-        float best_score = 0;
-        for (int c = 0; c < cls_ch; c++) {
-          float s = sigmoidf_u8(cls[((size_t)c * bh + gy) * bw + gx], zc, qc);
-          if (s > gmax) gmax = s;
-          if (s > best_score) {
-            best_score = s;
-            best_cls = c;
+    if (y->out_fp32[b]) {
+      /* The unquantised exports (head_hardhat, fire_smoke, traffic_light):
+         the branches hold raw float logits, so the argmax compares floats
+         and the sigmoid is computed after the sweep. */
+      const float *box = (const float *)y->out_ptr[b];
+      const float *cls = (const float *)y->out_ptr[b + 3];
+      float *bestf = y->scratch_f;
+      for (int i = 0; i < cells; i++) bestf[i] = -1e30f;
+      for (int c = 0; c < cls_ch; c++) {
+        const float *plane = cls + (size_t)c * cells;
+        for (int i = 0; i < cells; i++) {
+          if (plane[i] > bestf[i]) {
+            bestf[i] = plane[i];
+            bestc[i] = (uint8_t)c;
           }
         }
-        if (best_cls < 0 || best_score < y->threshold) continue;
+      }
+      for (int i = 0; i < cells; i++) {
+        const float logit = bestf[i];
+        if (logit > bmax_f[b]) bmax_f[b] = logit;
+        const float s = 1.0f / (1.0f + expf(-logit));
+        if (s < y->threshold) continue;
 
-        /* One cell is one box, not one box per DFL group: the 4 distributions all
-           belong to the same candidate. */
-        {
-          const int stride = 8 << b;
-          /* cell centre in input pixels */
-          float cx = ((float)gx + 0.5f) * (float)stride;
-          float cy = ((float)gy + 0.5f) * (float)stride;
-          float l = dfl_dist(box, stride, 0, bh, bw, gx, gy, qb, zb, groups);
-          float t = dfl_dist(box, stride, 1, bh, bw, gx, gy, qb, zb, groups);
-          float r = dfl_dist(box, stride, 2, bh, bw, gx, gy, qb, zb, groups);
-          float bb = dfl_dist(box, stride, 3, bh, bw, gx, gy, qb, zb, groups);
+        const int gx = i % bw, gy = i / bw;
+        const int stride = 8 << b;
+        /* cell centre in input pixels */
+        const float cx = ((float)gx + 0.5f) * (float)stride;
+        const float cy = ((float)gy + 0.5f) * (float)stride;
+        /* One cell is one box, not one box per DFL group: the 4 distributions
+           all belong to the same candidate. */
+        const float l = dfl_dist_f(box, stride, 0, bh, bw, gx, gy, groups);
+        const float t = dfl_dist_f(box, stride, 1, bh, bw, gx, gy, groups);
+        const float r = dfl_dist_f(box, stride, 2, bh, bw, gx, gy, groups);
+        const float bb = dfl_dist_f(box, stride, 3, bh, bw, gx, gy, groups);
+        n = push_det(tmp, n, cx, cy, l, t, r, bb, s, (int)bestc[i], pad_x, pad_y, kx, ky);
+      }
+    } else {
+      const int8_t *box = y->out_ptr[b];
+      const int8_t *cls = y->out_ptr[b + 3];
+      const float qb = y->out_q[b];
+      const int zb = y->out_zero[b];
 
-          /* input pixels -> de-letterbox -> frame pixels */
-          float x0 = cx - l;
-          float y0 = cy - t;
-          float x1 = cx + r;
-          float y1 = cy + bb;
-          x0 = (x0 - pad_x) / kx; x1 = (x1 - pad_x) / kx;
-          y0 = (y0 - pad_y) / ky; y1 = (y1 - pad_y) / ky;
-          if (n < (int)(sizeof(tmp) / sizeof(tmp[0]))) {
-            tmp[n].x1 = x0; tmp[n].y1 = y0;
-            tmp[n].x2 = x1; tmp[n].y2 = y1;
-            tmp[n].score = best_score;
-            tmp[n].cls = best_cls;
-            n++;
+      /* Pass 1: the best class per cell, one class plane at a time. The values
+         are quantised and sigmoid is monotonic, so the argmax over the raw
+         bytes is the argmax over the scores. Sweeping whole planes keeps the
+         reads sequential; the old per-cell shape jumped between up to 80 of
+         them and ran expf() for every value. */
+      int8_t *bestq = y->scratch_q;
+      memset(bestq, -128, (size_t)cells);
+      for (int c = 0; c < cls_ch; c++) {
+        const int8_t *plane = cls + (size_t)c * cells;
+        for (int i = 0; i < cells; i++) {
+          if (plane[i] > bestq[i]) {
+            bestq[i] = plane[i];
+            bestc[i] = (uint8_t)c;
           }
         }
+      }
 
+      /* Pass 2: threshold via the LUT and DFL-decode the survivors. */
+      const float *lut = y->sig_lut[b];
+      for (int i = 0; i < cells; i++) {
+        const int qv = bestq[i];
+        if (qv > bmax_q[b]) bmax_q[b] = qv;
+        const float s = lut[qv + 128];
+        if (s < y->threshold) continue;
+
+        const int gx = i % bw, gy = i / bw;
+        const int stride = 8 << b;
+        /* cell centre in input pixels */
+        const float cx = ((float)gx + 0.5f) * (float)stride;
+        const float cy = ((float)gy + 0.5f) * (float)stride;
+        /* One cell is one box, not one box per DFL group: the 4 distributions
+           all belong to the same candidate. */
+        const float l = dfl_dist(box, stride, 0, bh, bw, gx, gy, qb, zb, groups);
+        const float t = dfl_dist(box, stride, 1, bh, bw, gx, gy, qb, zb, groups);
+        const float r = dfl_dist(box, stride, 2, bh, bw, gx, gy, qb, zb, groups);
+        const float bb = dfl_dist(box, stride, 3, bh, bw, gx, gy, qb, zb, groups);
+        n = push_det(tmp, n, cx, cy, l, t, r, bb, s, (int)bestc[i], pad_x, pad_y, kx, ky);
       }
     }
+  }
+
+  float gmax = 0.0f;
+  for (int b = 0; b < 3; b++) {
+    float s;
+    if (y->out_fp32[b])
+      s = (bmax_f[b] > -1e29f) ? 1.0f / (1.0f + expf(-bmax_f[b])) : 0.0f;
+    else
+      s = y->sig_lut[b][bmax_q[b] + 128];
+    if (s > gmax) gmax = s;
   }
 
   n = nms(tmp, n, y->nms_iou);
@@ -488,6 +636,7 @@ static int decode(nv_yolo8_t *y, int cam_w, int cam_h, nv_yolo8_det_t *out, int 
 static int forward_and_decode(nv_yolo8_t *y, int cam_w, int cam_h, nv_yolo8_det_t *dets,
                               int max_out, int *n_out) {
 
+  const double t_submit = now_ms();
   void *task = NULL;
   CVI_RC frc = CVI_NN_ForwardAsync(y->model, y->in, y->n_in, y->out, y->n_out, &task);
 
@@ -539,9 +688,16 @@ static int forward_and_decode(nv_yolo8_t *y, int cam_w, int cam_h, nv_yolo8_det_
   /* Re-read the output pointers: the runtime is free to rebind the output
      tensors per forward, and reading the pointers cached at open() time would
      then decode a stale or untouched buffer. */
+  y->avg_fwd = y->avg_fwd * 0.9 + (now_ms() - t_submit) * 0.1;
+
+  /* Re-read the output pointers: the runtime is free to rebind the output
+     tensors per forward, and reading the pointers cached at open() time would
+     then decode a stale or untouched buffer. */
   for (int i = 0; i < y->n_out; i++) y->out_ptr[i] = (int8_t *)CVI_NN_TensorPtr(&y->out[i]);
 
+  const double t_dec = now_ms();
   *n_out = decode(y, cam_w, cam_h, dets, max_out);
+  y->avg_dec = y->avg_dec * 0.9 + (now_ms() - t_dec) * 0.1;
   return 0;
 }
 
@@ -550,8 +706,9 @@ static int forward_and_decode(nv_yolo8_t *y, int cam_w, int cam_h, nv_yolo8_det_
 int nv_yolo8_infer(nv_yolo8_t *y, const uint8_t *y_plane, const uint8_t *uv_plane, uint32_t stride,
                    int cam_w, int cam_h, int uv_swap, nv_yolo8_det_t *dets, int max_out,
                    int *n_out) {
-  double t0 = now_ms();
+  const double t0 = now_ms();
   preprocess(y, y_plane, uv_plane, stride, cam_w, cam_h, uv_swap);
+  y->avg_prep = y->avg_prep * 0.9 + (now_ms() - t0) * 0.1;
   int rc = forward_and_decode(y, cam_w, cam_h, dets, max_out, n_out);
   y->avg_ms = y->avg_ms * 0.9 + (now_ms() - t0) * 0.1;
   return rc;
@@ -596,8 +753,9 @@ static void preprocess_bgr(nv_yolo8_t *y, const uint8_t *src, uint32_t stride, i
 
 int nv_yolo8_infer_bgr(nv_yolo8_t *y, const uint8_t *bgr, uint32_t stride, int cam_w, int cam_h,
                        nv_yolo8_det_t *dets, int max_out, int *n_out) {
-  double t0 = now_ms();
+  const double t0 = now_ms();
   preprocess_bgr(y, bgr, stride, cam_w, cam_h);
+  y->avg_prep = y->avg_prep * 0.9 + (now_ms() - t0) * 0.1;
   int rc = forward_and_decode(y, cam_w, cam_h, dets, max_out, n_out);
   y->avg_ms = y->avg_ms * 0.9 + (now_ms() - t0) * 0.1;
   return rc;
@@ -608,11 +766,24 @@ int nv_yolo8_infer_bgr(nv_yolo8_t *y, const uint8_t *bgr, uint32_t stride, int c
    the three planes drop straight into the tensor. No per-pixel CPU work. */
 int nv_yolo8_infer_rgb(nv_yolo8_t *y, const uint8_t *planes, int cam_w, int cam_h,
                        nv_yolo8_det_t *dets, int max_out, int *n_out) {
-  double t0 = now_ms();
+  const double t0 = now_ms();
   const size_t plane = (size_t)y->in_w * y->in_h;
   for (int p = 0; p < 3; p++)
     memcpy((int8_t *)y->in_ptr + plane * p, planes + plane * p, plane);
+  y->avg_prep = y->avg_prep * 0.9 + (now_ms() - t0) * 0.1;
   int rc = forward_and_decode(y, cam_w, cam_h, dets, max_out, n_out);
   y->avg_ms = y->avg_ms * 0.9 + (now_ms() - t0) * 0.1;
+  return rc;
+}
+
+/* The tensor is already filled -- the VPSS hardware path copies its planes
+   into y->in_ptr first -- so only the forward and the decode are timed here.
+   prep_ms is that copy's cost, folded into the phase statistics. */
+int nv_yolo8_infer_filled(nv_yolo8_t *y, int cam_w, int cam_h, double prep_ms,
+                          nv_yolo8_det_t *dets, int max_out, int *n_out) {
+  const double t0 = now_ms();
+  if (prep_ms >= 0.0) y->avg_prep = y->avg_prep * 0.9 + prep_ms * 0.1;
+  int rc = forward_and_decode(y, cam_w, cam_h, dets, max_out, n_out);
+  y->avg_ms = y->avg_ms * 0.9 + ((now_ms() - t0) + (prep_ms > 0.0 ? prep_ms : 0.0)) * 0.1;
   return rc;
 }

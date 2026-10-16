@@ -34,7 +34,24 @@ public:
     int detect_nv21(const uint8_t *y_plane, const uint8_t *uv_plane, int width, int height,
                     uint32_t stride, std::vector<DetBox> &out);
 
+    /* Hardware-input path: the VPSS channel (vpss_det.c) produced the int8
+       letterboxed tensor. This waits for a frame, copies it into the NPU input
+       and runs the usual forward/decode; width/height are the frame dimensions
+       the boxes are mapped back to. Returns -3 when no frame arrived within
+       timeout_ms -- a pipeline condition, not an inference failure; -1/-2 as
+       the other paths. */
+    int detect_vpss(int width, int height, int timeout_ms, std::vector<DetBox> &out);
+
     double avg_ms() const { return y_.avg_ms; }
+    /* Rolling phase costs of the recent inferences (ms): preprocess (or the
+       VPSS copy), forward, decode. */
+    double prep_ms() const { return y_.avg_prep; }
+    double fwd_ms() const { return y_.avg_fwd; }
+    double dec_ms() const { return y_.avg_dec; }
+    /* Model input size and quantisation, for configuring the VPSS channel. */
+    int input_w() const { return y_.in_w; }
+    int input_h() const { return y_.in_h; }
+    float input_qscale() const { return y_.in_qscale; }
     /* Highest class score of the last inference (per-detection log line). */
     float last_max_score() const { return y_.last_max_score; }
 

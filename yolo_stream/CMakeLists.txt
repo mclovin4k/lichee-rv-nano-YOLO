@@ -22,7 +22,7 @@ find_package(OpenCV REQUIRED)
 set(EXECUTABLE_OUTPUT_PATH ${CMAKE_BINARY_DIR}/bin)
 file(MAKE_DIRECTORY ${EXECUTABLE_OUTPUT_PATH})
 
-add_executable(stream_yolo main.cpp MJPEGWriter.cpp yolo.cpp yolo8.c venc_jpeg.c draw_nv21.c)
+add_executable(stream_yolo main.cpp MJPEGWriter.cpp yolo.cpp yolo8.c venc_jpeg.c draw_nv21.c vpss_det.c)
 
 # Capture (OpenCV highgui -> CVI backend) reaches most of the middleware via
 # dlopen at runtime; we link only what we call directly:
