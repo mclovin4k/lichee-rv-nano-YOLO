@@ -1,23 +1,25 @@
-# Плата: установка, автозапуск, управление
+# Плата: установка, запуск, управление
 
 Состав: `stream_yolo` (бинарь), `start_stream.sh` (меню моделей + управление),
-`s.sh` (MIPI-клок, pinmux, USB-сеть), `models/` (7 моделей YOLOv8n/YOLO11n-det),
-`libs_patch/` (middleware-библиотеки SDK, на них отлажен бинарь),
-`S99z-cam-init.sh` / `S99z-stream.sh` / `S99z-swap.sh` (init-скрипты).
+`models/` (7 моделей YOLOv8n/YOLO11n-det), `libs_patch/` (middleware-библиотеки
+SDK, на них отлажен бинарь), `README.md`.
 
 ## Установка на чистый образ
 
 ```sh
 # 1. файлы на плату
-scp -r board/* root@192.0.2.1:/root/
-# 2. автозапуск
-cp /root/S99z-cam-init.sh /root/S99z-stream.sh /root/S99z-swap.sh /etc/init.d/
-chmod +x /etc/init.d/S99z-*.sh /root/s.sh /root/start_stream.sh
-# 3. swap (по желанию; иначе S99z-swap молча пропустит)
-dd if=/dev/zero of=/swapfile bs=1M count=1024 && mkswap /swapfile
-# 4. фикс TPU (см. ../tpu-fix/README.md), затем
+scp -r board/* root@<IP>:/root/
+ssh root@<IP> 'chmod +x /root/start_stream.sh /root/stream_yolo'
+# 2. swap (по желанию; после перезагрузки включается вручную)
+dd if=/dev/zero of=/swapfile bs=1M count=1024 && mkswap /swapfile && swapon /swapfile
+# 3. фикс TPU (см. ../tpu-fix/README.md), затем
 reboot
 ```
+
+Автозапуск не ставится: после загрузки поток запускается вручную
+`/root/start_stream.sh`. Камеру штатный образ настраивает сам по
+`/mnt/data/sensor_cfg.ini` (адрес матрицы на I2C и `lane_id` MIPI-пар);
+никаких `devmem`/pinmux-правок и `s.sh` в комплекте нет.
 
 `board/libs_patch/` копируется вместе со всем остальным в `/root/libs_patch`
 (отладочная связка middleware SDK). Если её не копировать, `start_stream.sh`
@@ -38,7 +40,7 @@ reboot
 7777: `start_stream.sh` сам останавливает его перед стартом, а
 `start_face.sh start` сам останавливает `stream_yolo`.
 
-- Поток: `http://192.0.2.1:7777/` (MJPEG)
+- Поток: `http://<IP>:7777/` (MJPEG)
 - Лог: `/root/log/stream.log` (при старте прошлый уезжает в `.1`)
 - Ручки: `SY_DET_THR` (порог), `SY_HP="W H"` (разрешение), `SY_MODEL` (модель для
   `auto`), `SY_MAX_BOXES` (анти-всплеск: не публиковать результат, где рамок
@@ -79,10 +81,12 @@ int8 или fp32): число классов и размер входа бина
 шумные строки `isp_clut_ctrl_postprocess` в логе — безвредны. Если поток всё же
 встал намертво — `/root/start_stream.sh restart`.
 
-## Как это работает при загрузке
+## Загрузка платы
 
 ```
-rcS -> S99z-cam-init.sh   (source /root/s.sh: MIPI 0x03001174/0x0300118C, usb0 192.0.2.1)
-    -> S99z-swap.sh       (swapon /swapfile, если есть)
-    -> S99z-stream.sh     (start_stream.sh auto -> stream_yolo)
+rcS -> штатные S* скрипты образа, в т.ч. настройка MIPI по /mnt/data/sensor_cfg.ini
+    -> sshd/usb0 по настройкам образа
 ```
+
+Поток и face_stream автозапуском не поднимаются: после загрузки выберите режим
+вручную (`/root/start_stream.sh` или `/root/start_face.sh start`).

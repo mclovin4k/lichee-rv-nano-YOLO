@@ -90,12 +90,8 @@ b831f36ed8e4e0056c3eedfdde4f075a  board/models/yolov8n_det_head_hardhat_576_960_
 34adeb30eafdb06e93e097409cf3fd26  board/models/yolov8n_det_license_plate_384_640_INT8_cv181x.cvimodel
 3f077ae7dba5196011841871b8e0bef9  board/models/yolov8n_det_person_vehicle_384_640_INT8_cv181x.cvimodel
 62dd868132abb29f1b200f28fb6225dd  board/models/yolov8n_det_traffic_light_384_640_INT8_cv181x.cvimodel
-69e446ba61e179c9f3960f0271e50ce6  board/README.md
-90e96a96bb4fabed29eaf7ed60ed2404  board/S99z-cam-init.sh
-6231918c6f362fa32b39886a93ed47d0  board/S99z-stream.sh
-d49bf8c45f86aeab363ab93f35cae25c  board/S99z-swap.sh
-e46ab1ee8bb54b76855bb4614e6fab94  board/s.sh
-3fcc4209bf3d24b83b4744d4cbad0183  board/start_stream.sh
+87038b5e3f3dcba5b740fa66e1eed524  board/README.md
+414542483d91a6226f1d122f636991ec  board/start_stream.sh
 2b97a857a60ba19730f996439c25c801  board/stream_yolo
 5b692afa5cc82cae53b6a36f77f9b570  tpu-fix/README.md
 3c0545f7a42b233987c9e52ebc56affd  tpu-fix/soph_tpu.ko

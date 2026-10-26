@@ -9,7 +9,7 @@ from pathlib import Path
 APP_DIR = Path(__file__).resolve().parent.parent
 
 DEFAULTS: dict = {
-    "board_ip": "192.0.2.1",
+    "board_ip": "",  # адрес у каждой платы свой — задаётся в настройках
     "board_user": "root",
     "board_password": "root",
     "stream_port": 7777,

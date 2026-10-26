@@ -2,7 +2,7 @@
 # start_stream.sh -- запуск/перезапуск потока stream_yolo (MJPEG + NPU-детекция).
 #
 #   ./start_stream.sh                интерактивное меню выбора модели
-#   ./start_stream.sh auto           без меню, модель по умолчанию (автозапуск)
+#   ./start_stream.sh auto           без меню, модель по умолчанию
 #   ./start_stream.sh <часть имени>  запуск конкретной модели (файл или подстрока)
 #   ./start_stream.sh stop|restart|status|log
 #
@@ -154,7 +154,7 @@ run_path() { # $1: полный путь к модели
     stop_app || { echo "не смог остановить stream_yolo"; exit 1; }
     if start_app "$1"; then
         echo "запущено: ${1##*/}"
-        echo "поток MJPEG: http://192.0.2.1:${SY_HTTP_PORT:-7777}/   лог: $LOG"
+        echo "поток MJPEG: http://<IP>:${SY_HTTP_PORT:-7777}/   лог: $LOG"
     else
         echo "старт не удался, смотри $LOG"
         exit 1
@@ -172,7 +172,7 @@ status)
         echo "stream_yolo: работает (pid $P)"
         grep "MJPEG on" "$LOG" 2>/dev/null | tail -1
         grep "^\[stream\]" "$LOG" 2>/dev/null | tail -1
-        echo "поток MJPEG: http://192.0.2.1:7777/"
+        echo "поток MJPEG: http://<IP>:7777/"
     else
         echo "stream_yolo: не запущен (лог: $LOG)"
     fi

@@ -10,7 +10,7 @@
 ## Архитектура
 
 ```
-GC4653 (MIPI CSI, sensor_cfg.ini: bus 4, addr 29, lane {2,0,1})
+GC4653 (MIPI CSI; адрес на I2C и lane_id MIPI-пар — из /mnt/data/sensor_cfg.ini)
   → VI (2560×1440)                     ─┐ ядро/RTOS, DDR
   → VPSS гр.0, кан.0: crop/scale 960×540 (SY_HP), NV21 (fmt=19)
       │
@@ -156,8 +156,8 @@ git apply /path/to/lichee/yolo_stream/patches/opencv-mobile-4.13.0-cvi-capture.p
 ## Деплой и запуск на плате
 
 ```sh
-scp build/bin/stream_yolo root@192.0.2.1:/root/stream_yolo.new
-ssh root@192.0.2.1 'mv /root/stream_yolo.new /root/stream_yolo; chmod +x /root/stream_yolo'
+scp build/bin/stream_yolo root@<IP>:/root/stream_yolo.new
+ssh root@<IP> 'mv /root/stream_yolo.new /root/stream_yolo; chmod +x /root/stream_yolo'
 ```
 
 На плате разложены скрипты (см. `scripts/` и комплект `dist/board/`):
@@ -167,23 +167,24 @@ ssh root@192.0.2.1 'mv /root/stream_yolo.new /root/stream_yolo; chmod +x /root/s
   сдвигается в `.1`; модели из `/root/models/models.order` печатаются в конце
   меню (в порядке добавления) — так новая модель, залитая утилитой, оказывается
   последней;
-- `/etc/init.d/S99z-*.sh` — автозапуск при загрузке (`cam-init` = `/root/s.sh`,
-  `swap`, `stream` = `start_stream.sh auto`); супервизора нет — клин TPU
-  приложение переживает само.
+- автозапуск не ставится: после загрузки поток запускается вручную. Камеру
+  штатный образ настраивает сам по `/mnt/data/sensor_cfg.ini` (адрес матрицы
+  на I2C и `lane_id` MIPI-пар); `s.sh`/`S99z-*` с `devmem` и pinmux в комплект
+  не входят. Супервизора нет — клин TPU приложение переживает само.
 
 Ручной запуск:
 
 ```sh
-ssh root@192.0.2.1 '/root/start_stream.sh'          # меню моделей
-ssh root@192.0.2.1 '/root/start_stream.sh auto'     # без меню
-ssh root@192.0.2.1 '/root/start_stream.sh restart'  # перезапуск
+ssh root@<IP> '/root/start_stream.sh'          # меню моделей
+ssh root@<IP> '/root/start_stream.sh auto'     # без меню
+ssh root@<IP> '/root/start_stream.sh restart'  # перезапуск
 ```
 
 `face_stream` из комплекта `lichee-face-stream` занимает ту же камеру и порт
 7777, поэтому режимы взаимоисключающие: `start_stream.sh` сам останавливает
 `face_stream`, а `start_face.sh start` сам останавливает `stream_yolo`.
 
-Клиент: `vlc http://192.0.2.1:7777/` или `ffplay -i http://192.0.2.1:7777/`.
+Клиент: `vlc http://<IP>:7777/` или `ffplay -i http://<IP>:7777/`.
 
 ## Ручки окружения (без пересборки)
 
@@ -218,7 +219,7 @@ ssh root@192.0.2.1 '/root/start_stream.sh restart'  # перезапуск
 ## Проверка
 
 ```sh
-ssh root@192.0.2.1 'grep "\[stream\]" /root/log/stream.log | tail -3'
+ssh root@<IP> 'grep "\[stream\]" /root/log/stream.log | tail -3'
 # [stream] frames=1080 fps=30.0 det=83.8ms (prep=38.3 fwd=37.0 dec=10.7) boxes=1 det_age=0.0s
 #   fps      — частота потока (не зависит от детектора)
 #   det      — EMA времени одного инференса (prep/fwd/dec — подготовка входа,
@@ -226,7 +227,7 @@ ssh root@192.0.2.1 'grep "\[stream\]" /root/log/stream.log | tail -3'
 #   boxes    — сколько рамок в последнем результате
 #   det_age  — возраст последних рамок (растёт во время клина TPU)
 
-ssh root@192.0.2.1 'grep "^det:" /root/log/stream.log | tail -3'
+ssh root@<IP> 'grep "^det:" /root/log/stream.log | tail -3'
 # det: n=1 max=0.636 | 72:0.64 [325 297 585 639]
 #   n        — число рамок после NMS
 #   max      — лучший скор сети в кадре (виден, даже если рамок нет)
@@ -234,10 +235,10 @@ ssh root@192.0.2.1 'grep "^det:" /root/log/stream.log | tail -3'
 
 # во время клина TPU в кадре видна надпись no det Ns (рамки старше TTL
 # не рисуются), а опоздавшие результаты отбрасываются:
-ssh root@192.0.2.1 'grep -c "dropped stale result" /root/log/stream.log'
+ssh root@<IP> 'grep -c "dropped stale result" /root/log/stream.log'
 
 # кадр из потока (на хосте):
-curl -s -m 5 http://192.0.2.1:7777/ | head -c 200000 > /tmp/m.bin
+curl -s -m 5 http://<IP>:7777/ | head -c 200000 > /tmp/m.bin
 # затем вырезать первый JPEG (FFD8..FFD9)
 ```
 
