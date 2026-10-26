@@ -1,7 +1,11 @@
 **/build/
 **/build-*/
+yolo_stream/build2/
 capture_test/libs/
 yolo_stream/libs/
 *.o
 *.log
 yolo_stream/archive/
+lichee-*.tar.gz*
+__pycache__/
+*.pyc
