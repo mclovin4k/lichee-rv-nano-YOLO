@@ -1,0 +1,11 @@
+.venv/
+__pycache__/
+*.pyc
+*.pt
+*.onnx
+*.cvimodel
+*.npz
+*.mlir
+datasets/
+runs/
+build/

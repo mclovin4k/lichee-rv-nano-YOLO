@@ -1,0 +1,1 @@
+"""Интерфейс Lichee YOLO Studio."""
