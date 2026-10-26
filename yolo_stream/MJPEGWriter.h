@@ -137,6 +137,14 @@ public:
     bool open()
     {
         sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+        if (sock != INVALID_SOCKET)
+        {
+            int yes = 1;
+            /* TIME_WAIT прошлого экземпляра (face/yolo) не должен мешать
+               новому процессу занять порт. */
+            setsockopt(sock, SOL_SOCKET, SO_REUSEADDR,
+                       (const char*)&yes, sizeof(yes));
+        }
 
         SOCKADDR_IN address;
         address.sin_addr.s_addr = INADDR_ANY;

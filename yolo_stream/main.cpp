@@ -30,6 +30,7 @@
 #include <atomic>
 #include <condition_variable>
 #include <mutex>
+#include <string>
 #include <thread>
 #include <vector>
 
@@ -55,6 +56,37 @@ static double mono_ms() {
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
     return (double)ts.tv_sec * 1000.0 + (double)ts.tv_nsec / 1e6;
+}
+
+/* Class names are not stored in a .cvimodel. yolo_studio writes a sidecar
+   next to the model (<model>.names, one name per line) and uploads it with
+   the model; SY_NAMES_FILE overrides the path. Without the file the overlay
+   keeps the old "class:N" labels. */
+static std::vector<std::string> load_class_names(const char *model_path) {
+    std::vector<std::string> names;
+    std::string path;
+    const char *env = getenv("SY_NAMES_FILE");
+    if (env != NULL && *env != '\0') {
+        path = env;
+    } else {
+        path = model_path;
+        const size_t slash = path.find_last_of('/');
+        const size_t dot = path.find_last_of('.');
+        if (dot != std::string::npos && (slash == std::string::npos || dot > slash))
+            path.resize(dot);
+        path += ".names";
+    }
+    FILE *f = fopen(path.c_str(), "r");
+    if (f == NULL) return names;
+    char buf[256];
+    while (fgets(buf, sizeof(buf), f) != NULL) {
+        std::string line(buf);
+        const size_t a = line.find_first_not_of(" \t\r\n");
+        const size_t b = line.find_last_not_of(" \t\r\n");
+        if (a != std::string::npos) names.push_back(line.substr(a, b - a + 1));
+    }
+    fclose(f);
+    return names;
 }
 
 /* The platform's TPU driver periodically blocks a forward in an ioctl, and
@@ -102,6 +134,7 @@ int main(int argc, char *argv[]) {
     }
 
     const char *model_path = argv[1];
+    const std::vector<std::string> class_names = load_class_names(model_path);
     /* "auto" (or a non-number) lets the model's class branches decide how
        many classes it has -- the menu script uses this for every model. */
     const int class_cnt = (strcmp(argv[2], "auto") == 0) ? 0 : atoi(argv[2]);
@@ -272,6 +305,25 @@ int main(int argc, char *argv[]) {
                 fflush(stdout);
                 detector.setup_model(model_path, class_cnt, det_thr, 0.5);
             } else if (rc == 0 && frame_age_ms <= (double)det_max_age_ms) {
+                /* Защита от «мусорных» выбросов: изредка (раз в несколько
+                   минут) VPSS/NPU отдаёт результат, в котором модель выдаёт
+                   десятки рамок со score ~1.0 сеткой по краям — координаты
+                   за границами кадра. Это битый вход, а не объекты; если
+                   опубликовать такую пачку, на экране на мгновение мигает
+                   «куча рамок». Нормальная сцена — единицы рамок, поэтому
+                   результат с подозрительно большим их числом не публикуем
+                   (на экране остаются предыдущие свежие рамки).
+                   Порог: SY_MAX_BOXES (по умолчанию 16, 0 = выключить). */
+                static const int max_boxes = [] {
+                    const char *e = getenv("SY_MAX_BOXES");
+                    return (e != NULL) ? atoi(e) : 16;
+                }();
+                if (max_boxes > 0 && (int)out.size() > max_boxes) {
+                    printf("det: burst n=%d max=%.3f dropped (bad input frame)\n", (int)out.size(),
+                           detector.last_max_score());
+                    fflush(stdout);
+                    return;
+                }
                 /* Per-detection log line: class, score and box for every
                    published frame; handy for comparing against the TDL
                    reference sample on the same scene. */
@@ -350,15 +402,26 @@ int main(int argc, char *argv[]) {
         });
     }
 
-    MJPEGWriter mjpeg(7777);
+    int http_port = 7777;
+    if (const char *hp = getenv("SY_HTTP_PORT")) {
+        int v = atoi(hp);
+        if (v > 0 && v < 65536) http_port = v;
+    }
+    MJPEGWriter mjpeg(http_port);
     mjpeg.start();
     char clsbuf[32];
     if (class_cnt > 0)
         snprintf(clsbuf, sizeof(clsbuf), "%d classes", class_cnt);
     else
         snprintf(clsbuf, sizeof(clsbuf), "auto classes");
-    printf("MJPEG on :7777, model %s (%s), raw NV21 pipeline %dx%d\n", model_path, clsbuf, cam_w,
-           cam_h);
+    printf("MJPEG on :%d, model %s (%s), raw NV21 pipeline %dx%d\n", http_port, model_path,
+           clsbuf, cam_w, cam_h);
+    if (!class_names.empty()) {
+        printf("overlay names:");
+        for (size_t i = 0; i < class_names.size(); i++)
+            printf(" %zu=%s", i, class_names[i].c_str());
+        printf("\n");
+    }
     fflush(stdout);
 
     int fails = 0;
@@ -475,7 +538,12 @@ int main(int argc, char *argv[]) {
                         nv21_draw_rect(yp, uvp, stride, w, h, (int)d.x1, (int)d.y1, (int)d.x2,
                                        (int)d.y2, 3, OVERLAY_Y, OVERLAY_U, OVERLAY_V);
                         char label[64];
-                        snprintf(label, sizeof(label), "class:%d score:%.2f", d.cls, d.score);
+                        if (d.cls >= 0 && (size_t)d.cls < class_names.size())
+                            snprintf(label, sizeof(label), "%s %.2f",
+                                     class_names[d.cls].c_str(), d.score);
+                        else
+                            snprintf(label, sizeof(label), "class:%d score:%.2f",
+                                     d.cls, d.score);
                         const int tscale = 4;
                         int twid = (int)strlen(label) * 6 * tscale;
                         int tx = (int)d.x1;

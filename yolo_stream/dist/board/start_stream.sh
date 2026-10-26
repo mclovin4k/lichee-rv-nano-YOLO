@@ -17,6 +17,10 @@ SELF_DIR=$(cd "$(dirname "$0")" && pwd)
 APP=$SELF_DIR/stream_yolo
 LOG=$SELF_DIR/log/stream.log
 MODEL_DIRS="$SELF_DIR/models /root/models /mnt/system/usr/bin/ai/models"
+# Модели из этого файла показываются в конце меню (в порядке добавления).
+ORDER_FILE=${ORDER_FILE:-/root/models/models.order}
+# face_stream использует ту же камеру и порт 7777 — перед стартом останавливаем.
+FACE_CTL=${FACE_CTL:-/root/start_face.sh}
 LDP=/root/mixboard1:/root/libs_patch/middleware_v2:/root/libs_patch/middleware_v2_3rd:/mnt/system/usr/lib:/mnt/system/usr/lib/3rd:/mnt/system/lib:/usr/lib
 
 # --- остановка: SIGINT, через 25 с SIGKILL; залипший в ioctl тред умирает ~60 с
@@ -34,7 +38,51 @@ stop_app() {
     return 0
 }
 
+# pidof находит и зомби, а они не держат камеру — берём только живые.
+face_pid() {
+    for p in $(pidof face_stream 2>/dev/null); do
+        st=$(awk '{print $3}' /proc/$p/stat 2>/dev/null)
+        [ "$st" = "Z" ] && continue
+        echo "$p"
+        return 0
+    done
+    return 1
+}
+
+# face_stream занимает ту же камеру и порт 7777: перед стартом убираем его.
+# У face_stream есть супервизор, поэтому pidof может показать только зомби,
+# а живой супервизор перезапустит поток — stop вызываем и по pid-файлу.
+stop_face() {
+    if [ -x "$FACE_CTL" ]; then
+        if [ -n "$(pidof face_stream 2>/dev/null)" ] || [ -f /tmp/face_supervisor.pid ]; then
+            echo "останавливаю face_stream (общая камера и порт 7777)..."
+        fi
+        # stop_face.sh сам разбирается с супервизором, зомби и pid-файлом.
+        "$FACE_CTL" stop >/dev/null 2>&1
+    elif [ -n "$(face_pid)" ]; then
+        echo "останавливаю face_stream (общая камера и порт 7777)..."
+        kill -INT $(face_pid) 2>/dev/null
+    else
+        return 0
+    fi
+    n=0
+    while [ $n -lt 30 ] && [ -n "$(pidof face_stream 2>/dev/null)" ]; do
+        sleep 1; n=$((n + 1))
+    done
+    if [ -n "$(face_pid)" ]; then
+        kill -9 $(face_pid) 2>/dev/null
+        sleep 1
+    fi
+    if [ -n "$(face_pid)" ]; then
+        echo "не удалось остановить face_stream"
+        return 1
+    fi
+    return 0
+}
+
 # --- список моделей (дубликаты по имени из разных каталогов не повторяются)
+# Модели из ORDER_FILE печатаются в конце — так новая модель, залитая утилитой,
+# оказывается последней в меню.
 list_models() {
     seen=""
     for d in $MODEL_DIRS; do
@@ -42,11 +90,27 @@ list_models() {
         for f in "$d"/*.cvimodel; do
             [ -f "$f" ] || continue
             b=${f##*/}
+            if [ -f "$ORDER_FILE" ] && grep -qxF "$b" "$ORDER_FILE"; then
+                continue
+            fi
             echo "$seen" | grep -q "|$b|" && continue
             seen="$seen|$b|"
             echo "$b"
         done
     done
+    if [ -f "$ORDER_FILE" ]; then
+        while IFS= read -r b; do
+            [ -n "$b" ] || continue
+            echo "$seen" | grep -q "|$b|" && continue
+            for d in $MODEL_DIRS; do
+                if [ -f "$d/$b" ]; then
+                    seen="$seen|$b|"
+                    echo "$b"
+                    break
+                fi
+            done
+        done < "$ORDER_FILE"
+    fi
 }
 
 find_model() { # $1: подстрока имени (пустая = первая доступная)
@@ -68,12 +132,14 @@ kind() { # короткая подпись модели для меню
     *traffic_light*) echo "светофор (5), 640x384" ;;
     *license_plate*) echo "номер (1), 640x384" ;;
     *fire_smoke*) echo "огонь/дым (2), 640x384" ;;
+    *drone*) echo "квадрокоптер (1), 640x640" ;;
     *det*) echo "YOLOv8-det (классы и размер авто)" ;;
     *) echo "не YOLOv8-det: бинарь откажется с сообщением" ;;
     esac
 }
 
 start_app() { # $1: полный путь к модели
+    stop_face || return 1
     mkdir -p "$SELF_DIR/log"
     if [ "${SY_KEEP_LOG:-0}" != "1" ] && [ -f "$LOG" ]; then mv -f "$LOG" "$LOG.1"; fi
     cd "$SELF_DIR" || return 1
@@ -88,7 +154,7 @@ run_path() { # $1: полный путь к модели
     stop_app || { echo "не смог остановить stream_yolo"; exit 1; }
     if start_app "$1"; then
         echo "запущено: ${1##*/}"
-        echo "поток MJPEG: http://192.0.2.1:7777/   лог: $LOG"
+        echo "поток MJPEG: http://192.0.2.1:${SY_HTTP_PORT:-7777}/   лог: $LOG"
     else
         echo "старт не удался, смотри $LOG"
         exit 1

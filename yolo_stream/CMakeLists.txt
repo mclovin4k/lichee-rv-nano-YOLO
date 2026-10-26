@@ -12,7 +12,7 @@ set(CMAKE_C_FLAGS "-march=rv64imafdc -mabi=lp64d -O3 -fsigned-char -fno-strict-a
 
 include_directories(
     third_party/cviruntime/include
-    $ENV{SDK_PATH}/sample/3rd/middleware/v2/include
+    "$ENV{SDK_PATH}/sample/3rd/middleware/v2/include"
 )
 
 set(OpenCV_DIR "/opt/opencv-mobile/opencv-mobile-4.13.0/build-rv/install/lib/cmake/opencv4")
@@ -32,7 +32,7 @@ target_link_libraries(stream_yolo
     -march=rv64imafdc -mabi=lp64d -static-libstdc++ -static-libgcc
     -L${CMAKE_CURRENT_SOURCE_DIR}/third_party/cviruntime/lib
     -lcviruntime -lcvikernel
-    -L$ENV{SDK_PATH}/sample/3rd/middleware/v2/lib
+    "-L$ENV{SDK_PATH}/sample/3rd/middleware/v2/lib"
     -lvenc -lsys
     -lpthread -latomic -lm
     ${OpenCV_LIBS}
