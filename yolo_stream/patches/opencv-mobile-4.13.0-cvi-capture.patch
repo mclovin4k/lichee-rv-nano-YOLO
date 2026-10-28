@@ -27,7 +27,7 @@ index f431159..5f6fe2c 100644
  
      double get(int propId) const;
 diff --git a/opencv-mobile-4.13.0/modules/highgui/src/capture_cvi.cpp b/opencv-mobile-4.13.0/modules/highgui/src/capture_cvi.cpp
-index fc33463..3f4bc89 100644
+index fc33463..f2c75fa 100644
 --- a/opencv-mobile-4.13.0/modules/highgui/src/capture_cvi.cpp
 +++ b/opencv-mobile-4.13.0/modules/highgui/src/capture_cvi.cpp
 @@ -38,6 +38,7 @@
@@ -38,29 +38,220 @@ index fc33463..3f4bc89 100644
  #include <sys/prctl.h>
  
  namespace cv {
-@@ -2667,14 +2668,19 @@ static const struct sns_ini_cfg* get_sns_ini_cfg()
+@@ -1935,7 +1936,7 @@
+ 
+         pstSnsObj = (ISP_SNS_OBJ_S*)dlsym(libsns_obj, "stSnsGc2083_Obj");
+     }
+-    else if (device_model == 3)
++    else if (device_model == 3 || device_model == 5)
+     {
+         // licheerv nano
+         libsns_obj = dlopen("libsns_gc4653.so", RTLD_LOCAL | RTLD_NOW);
+@@ -2600,7 +2601,7 @@ struct sns_ini_cfg
+     unsigned char mclk;
+ };
+ 
+-static const struct sns_ini_cfg* get_sns_ini_cfg()
++static const struct sns_ini_cfg* get_default_sns_ini_cfg()
+ {
+     const int device_model = get_device_model();
+ 
+@@ -2666,7 +2667,9 @@ static const struct sns_ini_cfg* get_sns_ini_cfg()
+     }
      if (device_model == 5)
      {
-         // licheerv nano new version
-+        // NOTE (this unit): MIPI lanes are wired {2,0,1,-1,-1},
-+        // matching /mnt/data/sensor_cfg.ini and the stock binaries.
-+        // Upstream default {4,3,2,-1,-1} fails pfnSnsProbe (0xc00e8006) here.
-+        // mclk=0 matches /mnt/data/sensor_cfg.ini (upstream mclk=1 leaves
-+        // the sensor unclocked -> I2C probe fails).
+-        // licheerv nano new version
++        // licheerv nano new version: fallback only. The stock image keeps the
++        // real wiring in /mnt/data/sensor_cfg.ini (bus, I2C address, lane_id,
++        // pn_swap, mclk), and get_sns_ini_cfg() overrides these values from it.
          static const struct sns_ini_cfg lpirvnano = {
              4,  // bus_id
              29, // sns_i2c_addr
-             0,  // mipi_dev
--            {4, 3, 2, -1, -1},  // lane_id
-+            {2, 0, 1, -1, -1},  // lane_id
-             {0, 0, 0, 0, 0},    // pn_swap
-             true,   // mclk_en
--            1       // mclk
-+            0       // mclk
-         };
+@@ -2683,6 +2686,183 @@ static const struct sns_ini_cfg* get_sns_ini_cfg()
+     return NULL;
+ }
  
-         return &lpirvnano;
-@@ -2758,6 +2764,26 @@ public:
++static char* trim_ini_value(char* s)
++{
++    while (*s == ' ' || *s == '\t')
++        s++;
++
++    char* end = s + strlen(s);
++    while (end > s && (end[-1] == '\n' || end[-1] == '\r' ||
++                       end[-1] == ' ' || end[-1] == '\t'))
++        *--end = '\0';
++
++    return s;
++}
++
++static bool parse_short_list(const char* value, short* out, int count)
++{
++    const char* p = value;
++    int n = 0;
++    while (*p && n < count)
++    {
++        char* end = NULL;
++        long v = strtol(p, &end, 10);
++        if (end == p)
++            break;
++        out[n++] = (short)v;
++        p = end;
++        while (*p == ',' || *p == ' ' || *p == '\t')
++            p++;
++    }
++    if (n == 0)
++        return false;
++    while (n < count)
++        out[n++] = -1;
++    return true;
++}
++
++static bool parse_schar_list(const char* value, signed char* out, int count)
++{
++    const char* p = value;
++    int n = 0;
++    while (*p && n < count)
++    {
++        char* end = NULL;
++        long v = strtol(p, &end, 10);
++        if (end == p)
++            break;
++        out[n++] = (signed char)v;
++        p = end;
++        while (*p == ',' || *p == ' ' || *p == '\t')
++            p++;
++    }
++    if (n == 0)
++        return false;
++    while (n < count)
++        out[n++] = 0;
++    return true;
++}
++
++/* The stock LicheeRV Nano image describes the camera bus in
++   /mnt/data/sensor_cfg.ini. Read that file instead of baking one board's
++   wiring into the binary; CVI_SENSOR_CFG can point at another file for
++   testing. Missing or incomplete files fall back to the per-model defaults. */
++static bool load_sns_ini_cfg(struct sns_ini_cfg* cfg)
++{
++    const char* path = getenv("CVI_SENSOR_CFG");
++    if (path == NULL || path[0] == '\0')
++        path = "/mnt/data/sensor_cfg.ini";
++
++    FILE* fp = fopen(path, "r");
++    if (fp == NULL)
++        return false;
++
++    char line[512];
++    bool in_sensor = false;
++    bool got_any = false;
++
++    while (fgets(line, sizeof(line), fp) != NULL)
++    {
++        char* p = line;
++        while (*p == ' ' || *p == '\t')
++            p++;
++
++        if (*p == '\0' || *p == '\n' || *p == '\r' ||
++            *p == '#' || *p == ';')
++            continue;
++
++        if (*p == '[')
++        {
++            char* close = strchr(p, ']');
++            if (close != NULL)
++            {
++                *close = '\0';
++                in_sensor = (strcmp(p + 1, "sensor") == 0);
++            }
++            continue;
++        }
++
++        if (!in_sensor)
++            continue;
++
++        char* eq = strchr(p, '=');
++        if (eq == NULL)
++            continue;
++
++        *eq = '\0';
++        char* key = trim_ini_value(p);
++        char* value = trim_ini_value(eq + 1);
++
++        if (strcmp(key, "bus_id") == 0)
++        {
++            cfg->bus_id = atoi(value);
++            got_any = true;
++        }
++        else if (strcmp(key, "sns_i2c_addr") == 0)
++        {
++            cfg->sns_i2c_addr = atoi(value);
++            got_any = true;
++        }
++        else if (strcmp(key, "mipi_dev") == 0)
++        {
++            cfg->mipi_dev = atoi(value);
++            got_any = true;
++        }
++        else if (strcmp(key, "lane_id") == 0)
++        {
++            got_any = parse_short_list(value, cfg->lane_id, 5) || got_any;
++        }
++        else if (strcmp(key, "pn_swap") == 0)
++        {
++            got_any = parse_schar_list(value, cfg->pn_swap, 5) || got_any;
++        }
++        else if (strcmp(key, "mclk_en") == 0)
++        {
++            cfg->mclk_en = (atoi(value) != 0);
++            got_any = true;
++        }
++        else if (strcmp(key, "mclk") == 0)
++        {
++            cfg->mclk = (unsigned char)atoi(value);
++            got_any = true;
++        }
++    }
++
++    fclose(fp);
++    return got_any;
++}
++
++static const struct sns_ini_cfg* get_sns_ini_cfg()
++{
++    static struct sns_ini_cfg cfg;
++    static int loaded = -1;
++
++    if (loaded < 0)
++    {
++        const struct sns_ini_cfg* defaults = get_default_sns_ini_cfg();
++        if (defaults != NULL)
++        {
++            cfg = *defaults;
++        }
++        else
++        {
++            memset(&cfg, 0, sizeof(cfg));
++            cfg.lane_id[0] = cfg.lane_id[1] = cfg.lane_id[2] = -1;
++            cfg.lane_id[3] = cfg.lane_id[4] = -1;
++        }
++
++        loaded = load_sns_ini_cfg(&cfg) ? 1 : 0;
++        fprintf(stderr,
++                "sensor_cfg: %s, bus=%d i2c=%d mipi=%d lanes=%d,%d,%d mclk=%d/%d\n",
++                loaded ? "/mnt/data/sensor_cfg.ini" : "built-in defaults",
++                cfg.bus_id, cfg.sns_i2c_addr, cfg.mipi_dev,
++                cfg.lane_id[0], cfg.lane_id[1], cfg.lane_id[2],
++                cfg.mclk_en ? 1 : 0, cfg.mclk);
++    }
++
++    return &cfg;
++}
++
+ struct sensor_cfg
+ {
+     CVI_U16 cap_width;
+@@ -2758,6 +2938,26 @@ public:
  
      int read_frame(unsigned char* bgrdata);
  
@@ -87,7 +278,7 @@ index fc33463..3f4bc89 100644
      int stop_streaming();
  
      int close();
-@@ -2769,7 +2795,14 @@ public:
+@@ -2769,7 +2969,14 @@ public:
      int output_width;
      int output_height;
  
@@ -102,7 +293,7 @@ index fc33463..3f4bc89 100644
      int b_vb_inited = 0;
      int b_sys_inited = 0;
      int b_sys_vi_opened = 0;
-@@ -2828,6 +2861,9 @@ capture_cvi_impl::capture_cvi_impl()
+@@ -2828,6 +3035,9 @@ capture_cvi_impl::capture_cvi_impl()
      output_width = 0;
      output_height = 0;
  
@@ -112,7 +303,7 @@ index fc33463..3f4bc89 100644
      b_vb_inited = 0;
      b_sys_inited = 0;
      b_sys_vi_opened = 0;
-@@ -2878,6 +2914,10 @@ capture_cvi_impl::~capture_cvi_impl()
+@@ -2878,6 +3088,10 @@ capture_cvi_impl::~capture_cvi_impl()
  
  int capture_cvi_impl::open(int width, int height, float fps)
  {
@@ -123,7 +314,7 @@ index fc33463..3f4bc89 100644
      const CVI_U16 cap_width = get_sensor_cfg()->cap_width;
      const CVI_U16 cap_height = get_sensor_cfg()->cap_height;
      const float cap_fps = get_sensor_cfg()->cap_fps;
-@@ -3290,7 +3330,7 @@ int capture_cvi_impl::open(int width, int height, float fps)
+@@ -3290,7 +3504,7 @@ int capture_cvi_impl::open(int width, int height, float fps)
              }
          }
  
@@ -132,7 +323,7 @@ index fc33463..3f4bc89 100644
  
          {
              CVI_S32 ret = CVI_MIPI_SetSensorReset(get_sns_ini_cfg()->mipi_dev, 0);
-@@ -3302,18 +3342,25 @@ int capture_cvi_impl::open(int width, int height, float fps)
+@@ -3302,18 +3516,25 @@ int capture_cvi_impl::open(int width, int height, float fps)
              }
          }
  
@@ -166,7 +357,7 @@ index fc33463..3f4bc89 100644
              }
          }
  
-@@ -3338,8 +3385,17 @@ int capture_cvi_impl::open(int width, int height, float fps)
+@@ -3338,8 +3559,17 @@ int capture_cvi_impl::open(int width, int height, float fps)
          stPipeAttr.bDiscardProPic = CVI_FALSE;
          stPipeAttr.bYuvBypassPath = CVI_FALSE;
  
@@ -184,7 +375,7 @@ index fc33463..3f4bc89 100644
          {
              fprintf(stderr, "CVI_VI_CreatePipe failed %x\n", ret);
              ret_val = -1;
-@@ -3593,8 +3649,16 @@ int capture_cvi_impl::open(int width, int height, float fps)
+@@ -3593,8 +3823,16 @@ int capture_cvi_impl::open(int width, int height, float fps)
              stGrpAttr.stFrameRate.s32DstFrameRate = -1;
              stGrpAttr.u8VpssDev = 0;
  
@@ -201,7 +392,7 @@ index fc33463..3f4bc89 100644
              {
                  fprintf(stderr, "CVI_VPSS_CreateGrp failed %x\n", ret);
                  ret_val = -1;
-@@ -3629,7 +3693,7 @@ int capture_cvi_impl::open(int width, int height, float fps)
+@@ -3629,7 +3867,7 @@ int capture_cvi_impl::open(int width, int height, float fps)
              stChnAttr.u32Width = output_width;
              stChnAttr.u32Height = output_height;
              stChnAttr.enVideoFormat = VIDEO_FORMAT_LINEAR;
@@ -210,7 +401,7 @@ index fc33463..3f4bc89 100644
              stChnAttr.stFrameRate.s32SrcFrameRate = -1;
              stChnAttr.stFrameRate.s32DstFrameRate = -1;
              stChnAttr.bMirror = CVI_FALSE;
-@@ -3762,10 +3826,14 @@ int capture_cvi_impl::read_frame(unsigned char* bgrdata)
+@@ -3762,10 +4000,14 @@ int capture_cvi_impl::read_frame(unsigned char* bgrdata)
  
      // vi get frame
      {
@@ -226,7 +417,7 @@ index fc33463..3f4bc89 100644
              ret_val = -1;
              goto OUT;
          }
-@@ -3810,10 +3878,14 @@ int capture_cvi_impl::read_frame(unsigned char* bgrdata)
+@@ -3810,10 +4052,14 @@ int capture_cvi_impl::read_frame(unsigned char* bgrdata)
  
      // vpss get frame
      {
@@ -242,7 +433,7 @@ index fc33463..3f4bc89 100644
              ret_val = -1;
              goto OUT;
          }
-@@ -3845,7 +3917,30 @@ int capture_cvi_impl::read_frame(unsigned char* bgrdata)
+@@ -3845,7 +4091,30 @@ int capture_cvi_impl::read_frame(unsigned char* bgrdata)
          fprintf(stderr, "vf u32FrameFlag = %u\n", vf.u32FrameFlag);
      }
  
@@ -274,7 +465,7 @@ index fc33463..3f4bc89 100644
      {
          const VIDEO_FRAME_S& vf = stFrameInfo_bgr.stVFrame;
  
-@@ -3863,7 +3958,7 @@ int capture_cvi_impl::read_frame(unsigned char* bgrdata)
+@@ -3863,7 +4132,7 @@ int capture_cvi_impl::read_frame(unsigned char* bgrdata)
          // fprintf(stderr, "border %d %d %d %d\n", border_top, border_bottom, border_left, border_right);
  
          void* mapped_ptr = CVI_SYS_MmapCache(phyaddr, length);
@@ -283,7 +474,7 @@ index fc33463..3f4bc89 100644
  
          const unsigned char* ptr = (const unsigned char*)mapped_ptr + border_top * stride + border_left;
  
-@@ -3911,7 +4006,12 @@ int capture_cvi_impl::read_frame(unsigned char* bgrdata)
+@@ -3911,7 +4180,12 @@ int capture_cvi_impl::read_frame(unsigned char* bgrdata)
          CVI_SYS_Munmap(mapped_ptr, length);
      }
  
@@ -297,7 +488,7 @@ index fc33463..3f4bc89 100644
  
      if (b_vpss_frame_got)
      {
-@@ -3940,10 +4040,100 @@ OUT:
+@@ -3940,10 +4214,100 @@ OUT:
      return ret_val;
  }
  
@@ -399,7 +590,7 @@ index fc33463..3f4bc89 100644
      if (b_vpss_grp_started)
      {
          CVI_S32 ret = CVI_VPSS_StopGrp(VpssGrp);
-@@ -4296,6 +4486,9 @@ int capture_cvi_impl::close()
+@@ -4296,6 +4660,9 @@ int capture_cvi_impl::close()
      // VpssGrp = CVI_VPSS_GetAvailableGrp();
      VpssChn = VPSS_CHN0;
  
@@ -409,7 +600,7 @@ index fc33463..3f4bc89 100644
      return ret_val;
  }
  
-@@ -4351,6 +4544,26 @@ int capture_cvi::read_frame(unsigned char* bgrdata)
+@@ -4351,6 +4718,26 @@ int capture_cvi::read_frame(unsigned char* bgrdata)
      return d->read_frame(bgrdata);
  }
  

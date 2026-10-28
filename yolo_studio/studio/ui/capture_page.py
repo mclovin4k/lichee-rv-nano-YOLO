@@ -115,7 +115,7 @@ class CapturePage(QWidget):
         board_row = QHBoxLayout()
         self.btn_prepare = QPushButton("Чистый поток")
         self.btn_prepare.setToolTip(
-            "Остановить yolo/face на плате и поднять поток без детекции и рамок")
+            "Остановить поток yolo на плате и поднять поток без детекции и рамок")
         self.btn_prepare.clicked.connect(self._prepare_board)
         self.btn_normal = QPushButton("Вернуть yolo")
         self.btn_normal.setToolTip("Остановить съёмку и вернуть обычный поток с рамками")
@@ -280,7 +280,7 @@ class CapturePage(QWidget):
     def _prepare_board(self) -> None:
         if QMessageBox.question(
                 self, "Режим съёмки",
-                "На плате будет остановлен текущий поток (yolo или face) "
+                "На плате будет остановлен текущий поток yolo "
                 "и запущен чистый поток без рамок. Продолжить?") \
                 != QMessageBox.StandardButton.Yes:
             return

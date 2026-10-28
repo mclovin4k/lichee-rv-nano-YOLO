@@ -10,6 +10,7 @@ import time
 import paramiko
 
 MODELS_DIR = "/root/models"
+STREAM_CTL_DIRS = ("/root/yolo_stream/start_stream.sh", "/root/start_stream.sh")
 
 
 class BoardError(RuntimeError):
@@ -62,41 +63,53 @@ class Board:
 
     def check(self) -> dict:
         rc, out, err = self.run(
-            "uname -sm; echo '---'; pidof stream_yolo || true; echo '---'; "
-            "pidof face_stream || true; echo '---'; uptime", timeout=20)
+            "uname -sm; echo '---'; "
+            "p=$(cat /tmp/yolo_stream.app.pid 2>/dev/null); "
+            "if [ -n \"$p\" ] && [ -d \"/proc/$p\" ]; then echo \"$p\"; "
+            "else pidof stream_yolo || true; fi; echo '---'; "
+            "uptime", timeout=20)
         parts = [p.strip() for p in out.split("---")]
         yolo = parts[1] if len(parts) > 1 else ""
-        face = parts[2] if len(parts) > 2 else ""
         return {
             "ssh": rc == 0,
             "uname": parts[0] if parts else "",
             "stream_yolo": yolo or None,
-            "face_stream": face or None,
-            "uptime": parts[3] if len(parts) > 3 else "",
+            "uptime": parts[2] if len(parts) > 2 else "",
             "error": err.strip(),
         }
 
     # ---------- режимы потока ----------
 
     def stop_all(self) -> str:
-        """Останавливает и yolo, и face (камера должна освободиться)."""
+        """Останавливает поток yolo (камера должна освободиться)."""
         cmd = (
-            "for s in /root/start_stream.sh /root/start_face.sh; do "
+            "for s in /root/yolo_stream/start_stream.sh /root/start_stream.sh; do "
             "[ -x \"$s\" ] && \"$s\" stop >/dev/null 2>&1; done; "
-            "echo stopped; pidof stream_yolo face_stream || true"
+            "echo stopped; pidof stream_yolo || true"
         )
         rc, out, err = self.run(cmd, timeout=120)
         if rc != 0 and "not found" not in err:
             raise BoardError(f"остановка потока: {err.strip() or rc}")
         return out.strip()
 
+    @staticmethod
+    def stream_cmd(args: str) -> str:
+        """Команда для start_stream.sh: новый путь, затем старый."""
+        paths = " ".join(STREAM_CTL_DIRS)
+        return (
+            f"S=; for p in {paths}; do [ -x \"$p\" ] && {{ S=$p; break; }}; done; "
+            "[ -n \"$S\" ] || { echo 'start_stream.sh не найден' >&2; exit 127; }; "
+            f"\"$S\" {args}"
+        )
+
     def start_clean(self, port: int | None = None) -> None:
         """YOLO-поток без детекции и без рамок — чистые кадры для датасета."""
         port = int(port or self.stream_port)
         cmd = (
-            "cd /root && SY_DET=0 SY_DRAW=0 SY_HTTP_PORT={port} "
-            "/root/start_stream.sh auto >>/root/log/studio_capture.log 2>&1"
-        ).format(port=port)
+            "mkdir -p /root/log && cd /root && "
+            "SY_DET=0 SY_DRAW=0 SY_HTTP_PORT={port} sh -c {script} "
+            ">>/root/log/studio_capture.log 2>&1"
+        ).format(port=port, script=shlex.quote(self.stream_cmd("auto")))
         rc, out, err = self.run(cmd, timeout=60)
         if rc != 0:
             raise BoardError(f"чистый поток не запустился: {err.strip() or out.strip()}")
@@ -106,9 +119,10 @@ class Board:
                 f"поток на порту {port} не отвечает. Последние строки:\n{tail}")
 
     def start_normal(self) -> None:
-        rc, out, err = self.run(
-            "cd /root && /root/start_stream.sh auto >>/root/log/autostart.log 2>&1",
-            timeout=60)
+        cmd = ("mkdir -p /root/log && cd /root && sh -c {script} "
+               ">>/root/log/autostart.log 2>&1"
+               .format(script=shlex.quote(self.stream_cmd("auto"))))
+        rc, out, err = self.run(cmd, timeout=60)
         if rc != 0:
             raise BoardError(f"поток не запустился: {err.strip() or out.strip()}")
         if not self.wait_http(self.stream_port, timeout=30):
@@ -147,8 +161,8 @@ class Board:
 
     def list_models(self) -> list[str]:
         rc, out, _err = self.run(
-            "ls -1 /root/models/*.cvimodel /mnt/system/usr/bin/ai/models/*.cvimodel "
-            "2>/dev/null || true", timeout=20)
+            "ls -1 /root/yolo_stream/models/*.cvimodel /root/models/*.cvimodel "
+            "/mnt/system/usr/bin/ai/models/*.cvimodel 2>/dev/null || true", timeout=20)
         names: list[str] = []
         for line in out.splitlines():
             name = line.strip().rsplit("/", 1)[-1]
@@ -210,9 +224,9 @@ class Board:
             raise BoardError(f"не удалось обновить models.order: {err.strip()}")
 
     def restart_with_model(self, substring: str) -> str:
-        rc, out, err = self.run(
-            f"cd /root && /root/start_stream.sh {shlex.quote(substring)}",
-            timeout=120)
+        cmd = ("cd /root && sh -c {script}"
+               .format(script=shlex.quote(self.stream_cmd(shlex.quote(substring)))))
+        rc, out, err = self.run(cmd, timeout=120)
         if rc != 0:
             raise BoardError(f"запуск модели: {err.strip() or out.strip()}")
         return out.strip()

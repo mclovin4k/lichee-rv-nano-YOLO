@@ -1,68 +1,65 @@
-# Плата: установка, запуск, управление
+# Плата: stream_yolo
 
-Состав: `stream_yolo` (бинарь), `start_stream.sh` (меню моделей + управление),
-`models/` (7 моделей YOLOv8n/YOLO11n-det), `libs_patch/` (middleware-библиотеки
-SDK, на них отлажен бинарь), `README.md`.
+Состав: `stream_yolo` (бинарь), `run_stream.sh` (окружение + loader),
+`start_stream.sh` (меню моделей и управление), `runtime/` (библиотеки и
+musl loader), `models/` (7 моделей YOLOv8n/YOLO11n-det).
 
-## Установка на чистый образ
+## Установка
+
+Скопировать всё в `/root/yolo_stream` (установщик `../../install.sh` делает
+это сам), затем:
 
 ```sh
-# 1. файлы на плату
-scp -r board/* root@<IP>:/root/
-ssh root@<IP> 'chmod +x /root/start_stream.sh /root/stream_yolo'
-# 2. swap (по желанию; после перезагрузки включается вручную)
-dd if=/dev/zero of=/swapfile bs=1M count=1024 && mkswap /swapfile && swapon /swapfile
-# 3. фикс TPU (см. ../tpu-fix/README.md), затем
-reboot
+/root/yolo_stream/start_stream.sh auto
 ```
 
-Автозапуск не ставится: после загрузки поток запускается вручную
-`/root/start_stream.sh`. Камеру штатный образ настраивает сам по
-`/mnt/data/sensor_cfg.ini` (адрес матрицы на I2C и `lane_id` MIPI-пар);
-никаких `devmem`/pinmux-правок и `s.sh` в комплекте нет.
-
-`board/libs_patch/` копируется вместе со всем остальным в `/root/libs_patch`
-(отладочная связка middleware SDK). Если её не копировать, `start_stream.sh`
-возьмёт библиотеки из системных каталогов — вариант `mixboard1` не нужен,
-`libvpu.so` есть на любом образе в `/mnt/system/usr/lib`.
+Камера настраивается штатным образом по `/mnt/data/sensor_cfg.ini`.
+Автозапуск не ставится.
 
 ## Управление
 
 ```sh
-/root/start_stream.sh             # меню: выбрать модель из /root/models и запустить
-/root/start_stream.sh auto        # модель по умолчанию (coco80), без меню
-/root/start_stream.sh <подстрока> # конкретная модель, напр. fire
-/root/start_stream.sh status      # pid + последние строки fps
-/root/start_stream.sh stop
+/root/yolo_stream/start_stream.sh             # меню: выбрать модель и запустить
+/root/yolo_stream/start_stream.sh auto        # модель по умолчанию (coco80)
+/root/yolo_stream/start_stream.sh <подстрока> # конкретная модель, напр. fire
+/root/yolo_stream/start_stream.sh status
+/root/yolo_stream/start_stream.sh stop
+/root/yolo_stream/start_stream.sh restart
 ```
 
-`face_stream` (комплект `lichee-face-stream`) использует ту же камеру и порт
-7777: `start_stream.sh` сам останавливает его перед стартом, а
-`start_face.sh start` сам останавливает `stream_yolo`.
-
 - Поток: `http://<IP>:7777/` (MJPEG)
-- Лог: `/root/log/stream.log` (при старте прошлый уезжает в `.1`)
-- Ручки: `SY_DET_THR` (порог), `SY_HP="W H"` (разрешение), `SY_MODEL` (модель для
-  `auto`), `SY_MAX_BOXES` (анти-всплеск: не публиковать результат, где рамок
-  больше N; по умолчанию 16, 0 — выключить), `SY_NAMES_FILE` (sidecar с
-  именами классов), остальные — в `main.cpp`.
+- Лог: `/root/yolo_stream/log/stream.log` (при старте прошлый уезжает в `.1`)
+- Модели: `models/` рядом со скриптом, затем `/root/models`
+- PID: `/tmp/yolo_stream.app.pid`
+
+`stream_yolo` и `face_stream` из соседнего проекта `yolo_face` используют
+одну камеру и порт 7777: `start_stream.sh` сам останавливает `face_stream`,
+а `start_face.sh start` сам останавливает `stream_yolo`.
+
+## Runtime
+
+`runtime/` содержит middleware-библиотеки камеры/ISP/VENC/VPSS,
+`libvenc`/`libsys`, `libstdc++`/`libgcc`/`libatomic` и musl loader.
+`libcviruntime.so`/`libcvikernel.so` и системные `libvpu.so`/`libz.so`
+берутся с платы (`/mnt/system/lib`, `/mnt/system/usr/lib`).
+
+Для запуска через встроенный загрузчик:
+
+```sh
+SY_BUNDLED_LOADER=1 /root/yolo_stream/start_stream.sh restart
+```
 
 ## Модели
 
-Положить файл `*.cvimodel` в `/root/models` — он появится в меню. Подходят
-любые YOLOv8/YOLO11-det экспорты (голова 3 масштаба x 64 DFL + N классов,
-int8 или fp32): число классов и размер входа бинарь определяет по тензорам
-сам. Модели других голов (SCRFD, позы, классификация и т.п.) бинарь отвергнет
-с понятным сообщением в логе. Штатные модели уже в `models/`, включая
-детектор квадрокоптеров `yolov11n_det_drone_640_640` (YOLO11n, 1 класс;
-пайплайн сборки — `scripts/model-drone/`). Это **v2**: дообучена на кадрах
-конкретного дрона (в руке, на столе, на полке вдали) + жёстких негативах
-(шнурок худи, сцена без дрона), поэтому уверенно ловит его и вблизи, и вдали
-(INT8 ~0.84–0.90), а на сцене без дрона молчит. Рядом лежит
-`yolov11n_det_drone_v1_generic.cvimodel.bak` — прежняя «общая» модель
-(обучена на полётных кадрах kc34251): хуже на этом дроне (вблизи ~0.3,
-вдали ~0.0), но лучше обобщает на другие. Вернуться к ней:
-`cp /root/models/yolov11n_det_drone_v1_generic.cvimodel.bak /root/models/yolov11n_det_drone_640_640_INT8_cv181x.cvimodel && /root/start_stream.sh drone`.
+Положить файл `*.cvimodel` в `models/` или `/root/models` — он появится в
+меню. Подходят любые YOLOv8/YOLO11-det экспорты (голова 3 масштаба × 64 DFL
++ N классов, int8 или fp32): число классов и размер входа бинарь определяет
+по тензорам сам. Модели других голов (SCRFD, позы, классификация и т.п.)
+бинарь отвергнет с понятным сообщением в логе.
+
+Дрон-модель `yolov11n_det_drone_640_640` — одна общая версия (YOLO11n,
+1 класс). Она производна от Ultralytics YOLO11n (AGPL-3.0); лицензии и
+источники — в `../../../THIRD_PARTY_NOTICES.md`.
 
 Имена классов в `.cvimodel` не хранятся. Рядом можно положить
 `<имя_модели>.names` (по одному имени в строке) — тогда рамки подписываются
@@ -77,9 +74,9 @@ int8 или fp32): число классов и размер входа бина
   рамки свежие.
 
 Известные мелочи: клин TPU (`run dmabuf timeout`) приложение переживает само
-(рамки пропадают на секунды, поток не рвётся; с фиксом TPU клин ограничен ~1 с);
-шумные строки `isp_clut_ctrl_postprocess` в логе — безвредны. Если поток всё же
-встал намертво — `/root/start_stream.sh restart`.
+(рамки пропадают на секунды, поток не рвётся; с TPU-патчем клин ограничен
+~1 с); шумные строки `isp_clut_ctrl_postprocess` в логе безвредны. Если
+поток всё же встал намертво — `/root/yolo_stream/start_stream.sh restart`.
 
 ## Загрузка платы
 
@@ -88,5 +85,5 @@ rcS -> штатные S* скрипты образа, в т.ч. настройк
     -> sshd/usb0 по настройкам образа
 ```
 
-Поток и face_stream автозапуском не поднимаются: после загрузки выберите режим
-вручную (`/root/start_stream.sh` или `/root/start_face.sh start`).
+Поток и `face_stream` автозапуском не поднимаются: после загрузки выберите
+режим вручную (`start_stream.sh` или `yolo_face/start_face.sh start`).

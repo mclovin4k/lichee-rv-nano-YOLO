@@ -1,0 +1,60 @@
+name: build
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  riscv:
+    name: ${{ matrix.project }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        project: [yolo_stream, yolo_face]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake git curl unzip patch
+
+      - name: Cache downloaded dependencies
+        uses: actions/cache@v4
+        with:
+          path: ${{ matrix.project }}/.deps
+          key: deps-${{ matrix.project }}-${{ hashFiles(format('{0}/scripts/fetch-deps.sh', matrix.project), format('{0}/patches/*.patch', matrix.project)) }}
+
+      - name: Fetch toolchain, SDK and OpenCV source
+        working-directory: ${{ matrix.project }}
+        run: ./scripts/fetch-deps.sh
+
+      - name: Build OpenCV with CVI backend
+        working-directory: ${{ matrix.project }}
+        run: ./scripts/build-opencv.sh
+
+      - name: Build application
+        working-directory: ${{ matrix.project }}
+        run: ./scripts/build.sh
+
+      - name: Upload binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.project }}-bin
+          path: |
+            ${{ matrix.project }}/build/bin/*
+          if-no-files-found: error
+
+  studio:
+    name: yolo_studio (python)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Byte-compile
+        run: python -m compileall -q yolo_studio/app.py yolo_studio/studio

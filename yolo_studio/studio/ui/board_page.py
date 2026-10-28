@@ -154,11 +154,10 @@ class BoardPage(QWidget):
 
     def _check_done(self, info: dict) -> None:
         yolo = info.get("stream_yolo") or "не запущен"
-        face = info.get("face_stream") or "не запущен"
         http = "ок" if info.get("http") else "нет ответа"
         cap = "ок" if info.get("capture") else "нет"
         text = (f"SSH: ок · {info.get('uname', '')}\n"
-                f"stream_yolo: {yolo} · face_stream: {face}\n"
+                f"stream_yolo: {yolo}\n"
                 f"поток :{self.stream_port.value()}: {http} · "
                 f"съёмочный :{self.cfg.get('capture_port')}: {cap}\n"
                 f"{info.get('uptime', '')}")
@@ -230,7 +229,7 @@ class BoardPage(QWidget):
         if QMessageBox.question(
                 self, "Запустить модель",
                 f"Поток на плате будет перезапущен с моделью\n{name}.\n"
-                "Съёмка/face будут остановлены. Продолжить?") \
+                "Текущая съёмка будет остановлена. Продолжить?") \
                 != QMessageBox.StandardButton.Yes:
             return
         board = self._board()

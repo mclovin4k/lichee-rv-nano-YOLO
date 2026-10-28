@@ -1,88 +1,135 @@
 #!/bin/sh
-# start_stream.sh -- запуск/перезапуск потока stream_yolo (MJPEG + NPU-детекция).
+# start_stream.sh -- MJPEG + NPU detection on LicheeRV Nano.
 #
-#   ./start_stream.sh                интерактивное меню выбора модели
-#   ./start_stream.sh auto           без меню, модель по умолчанию
-#   ./start_stream.sh <часть имени>  запуск конкретной модели (файл или подстрока)
+#   ./start_stream.sh                interactive model menu
+#   ./start_stream.sh auto           default model, no menu
+#   ./start_stream.sh <substring>    specific model (file name or substring)
 #   ./start_stream.sh stop|restart|status|log
 #
-# Ручки (необязательно): SY_MODEL=<подстрока>  SY_HP="W H" (по умолчанию "960 540")
-#   SY_DET_THR, SY_KEEP_LOG=1, SY_DUMP_NV21=<файл> и другие из main.cpp.
+# Optional environment:
+#   SY_MODEL=<substring>   model for "auto" (default coco80)
+#   SY_HP="W H"            capture size (default "960 540")
+#   SY_BUNDLED_LOADER=1    run through runtime/ld-musl-riscv64.so.1
+#   SY_KEEP_LOG=1          do not rotate the log on start
+#   plus the detection variables understood by stream_yolo (SY_DET_THR, ...)
 #
-# Модель -- любой YOLOv8-det cvimodel: число классов и размер входа бинарь
-# определяет по тензорам сам (аргумент "auto"). Модели ищутся в models/ рядом
-# со скриптом, затем в /root/models и /mnt/system/usr/bin/ai/models.
+# stream_yolo and face_stream share the camera and port 7777: starting one
+# stops the other.  No autostart is installed.  Camera geometry comes from
+# /mnt/data/sensor_cfg.ini.
+set -eu
 
-SELF_DIR=$(cd "$(dirname "$0")" && pwd)
-APP=$SELF_DIR/stream_yolo
-LOG=$SELF_DIR/log/stream.log
-MODEL_DIRS="$SELF_DIR/models /root/models /mnt/system/usr/bin/ai/models"
-# Модели из этого файла показываются в конце меню (в порядке добавления).
+SELF=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+APP=${APP:-"$SELF/stream_yolo"}
+LOG=${LOG:-"$SELF/log/stream.log"}
+MODEL_DIRS="$SELF/models /root/models /mnt/system/usr/bin/ai/models"
 ORDER_FILE=${ORDER_FILE:-/root/models/models.order}
-# face_stream использует ту же камеру и порт 7777 — перед стартом останавливаем.
-FACE_CTL=${FACE_CTL:-/root/start_face.sh}
-LDP=/root/mixboard1:/root/libs_patch/middleware_v2:/root/libs_patch/middleware_v2_3rd:/mnt/system/usr/lib:/mnt/system/usr/lib/3rd:/mnt/system/lib:/usr/lib
+APP_PID=${APP_PID:-/tmp/yolo_stream.app.pid}
 
-# --- остановка: SIGINT, через 25 с SIGKILL; залипший в ioctl тред умирает ~60 с
-stop_app() {
-    P=$(pidof stream_yolo)
-    [ -n "$P" ] || return 0
-    kill -INT $P 2>/dev/null
-    n=0
-    while [ $n -lt 25 ] && pidof stream_yolo > /dev/null; do sleep 1; n=$((n + 1)); done
-    pidof stream_yolo > /dev/null || return 0
-    kill -9 $(pidof stream_yolo) 2>/dev/null
-    n=0
-    while [ $n -lt 65 ] && pidof stream_yolo > /dev/null; do sleep 1; n=$((n + 1)); done
-    pidof stream_yolo > /dev/null && return 1
-    return 0
+pid_alive() {
+    [ -n "${1:-}" ] || return 1
+    [ -r "/proc/$1/stat" ] || return 1
+    [ "$(awk '{print $3}' "/proc/$1/stat" 2>/dev/null)" != "Z" ]
 }
 
-# pidof находит и зомби, а они не держат камеру — берём только живые.
-face_pid() {
-    for p in $(pidof face_stream 2>/dev/null); do
-        st=$(awk '{print $3}' /proc/$p/stat 2>/dev/null)
-        [ "$st" = "Z" ] && continue
-        echo "$p"
-        return 0
+find_proc_pid() { # find_proc_pid <basename>
+    for d in /proc/[0-9]*; do
+        [ -r "$d/cmdline" ] || continue
+        p=${d#/proc/}
+        pid_alive "$p" || continue
+        tr '\0' '\n' < "$d/cmdline" 2>/dev/null | while IFS= read -r arg; do
+            if [ "${arg##*/}" = "$1" ]; then
+                echo "$p"
+                break
+            fi
+        done | head -n 1 | grep . && return 0
     done
     return 1
 }
 
-# face_stream занимает ту же камеру и порт 7777: перед стартом убираем его.
-# У face_stream есть супервизор, поэтому pidof может показать только зомби,
-# а живой супервизор перезапустит поток — stop вызываем и по pid-файлу.
-stop_face() {
-    if [ -x "$FACE_CTL" ]; then
-        if [ -n "$(pidof face_stream 2>/dev/null)" ] || [ -f /tmp/face_supervisor.pid ]; then
-            echo "останавливаю face_stream (общая камера и порт 7777)..."
-        fi
-        # stop_face.sh сам разбирается с супервизором, зомби и pid-файлом.
-        "$FACE_CTL" stop >/dev/null 2>&1
-    elif [ -n "$(face_pid)" ]; then
-        echo "останавливаю face_stream (общая камера и порт 7777)..."
-        kill -INT $(face_pid) 2>/dev/null
-    else
+app_pid() {
+    if pid_alive "$(cat "$APP_PID" 2>/dev/null || true)"; then
+        cat "$APP_PID"
         return 0
     fi
+    find_proc_pid stream_yolo
+}
+
+face_pid() {
+    find_proc_pid face_stream
+}
+
+stop_app() {
+    P=$(app_pid) || P=
+    if [ -z "$P" ]; then
+        rm -f "$APP_PID"
+        echo "stopped"
+        return 0
+    fi
+    kill -INT "$P" 2>/dev/null || true
     n=0
-    while [ $n -lt 30 ] && [ -n "$(pidof face_stream 2>/dev/null)" ]; do
-        sleep 1; n=$((n + 1))
+    while [ "$n" -lt 25 ] && pid_alive "$P"; do
+        sleep 1
+        n=$((n + 1))
     done
-    if [ -n "$(face_pid)" ]; then
-        kill -9 $(face_pid) 2>/dev/null
+    if pid_alive "$P"; then
+        kill -9 "$P" 2>/dev/null || true
+        # A thread stuck in a TPU ioctl ignores SIGKILL until the driver
+        # timeout expires (~60 s on the stock module, ~1 s with tpu-fix).
+        n=0
+        while [ "$n" -lt 70 ] && pid_alive "$P"; do
+            sleep 1
+            n=$((n + 1))
+        done
+    fi
+    rm -f "$APP_PID"
+    if pid_alive "$P"; then
+        echo "stream_yolo did not exit (pid $P)"
+        return 1
+    fi
+    echo "stopped"
+}
+
+stop_face() {
+    P=$(face_pid) || P=
+    [ -n "$P" ] || return 0
+    echo "stopping face_stream (shared camera and port 7777)..."
+    # Stop supervisors first so they do not restart the app we are killing.
+    for f in /tmp/yolo_face.pid /tmp/face_supervisor.pid; do
+        [ -f "$f" ] && kill -INT "$(cat "$f" 2>/dev/null || true)" 2>/dev/null || true
+    done
+    for ctl in "$SELF/../yolo_face/start_face.sh" \
+               /root/yolo_face/start_face.sh /root/start_face.sh; do
+        if [ -x "$ctl" ]; then
+            "$ctl" stop >/dev/null 2>&1 || true
+            break
+        fi
+    done
+    n=0
+    while [ "$n" -lt 20 ] && pid_alive "$P"; do
+        sleep 1
+        n=$((n + 1))
+    done
+    if pid_alive "$P"; then
+        kill -INT "$P" 2>/dev/null || true
+        n=0
+        while [ "$n" -lt 10 ] && pid_alive "$P"; do
+            sleep 1
+            n=$((n + 1))
+        done
+    fi
+    if pid_alive "$P"; then
+        kill -9 "$P" 2>/dev/null || true
         sleep 1
     fi
-    if [ -n "$(face_pid)" ]; then
-        echo "не удалось остановить face_stream"
+    rm -f /tmp/yolo_face.app.pid
+    if pid_alive "$P"; then
+        echo "could not stop face_stream"
         return 1
     fi
     return 0
 }
 
-# --- список моделей (дубликаты по имени из разных каталогов не повторяются)
-# Модели из ORDER_FILE печатаются в конце — так новая модель, залитая утилитой,
-# оказывается последней в меню.
+# --- model list (duplicates from different directories are shown once)
 list_models() {
     seen=""
     for d in $MODEL_DIRS; do
@@ -90,10 +137,7 @@ list_models() {
         for f in "$d"/*.cvimodel; do
             [ -f "$f" ] || continue
             b=${f##*/}
-            if [ -f "$ORDER_FILE" ] && grep -qxF "$b" "$ORDER_FILE"; then
-                continue
-            fi
-            echo "$seen" | grep -q "|$b|" && continue
+            case "$seen" in *"|$b|"*) continue ;; esac
             seen="$seen|$b|"
             echo "$b"
         done
@@ -101,7 +145,7 @@ list_models() {
     if [ -f "$ORDER_FILE" ]; then
         while IFS= read -r b; do
             [ -n "$b" ] || continue
-            echo "$seen" | grep -q "|$b|" && continue
+            case "$seen" in *"|$b|"*) continue ;; esac
             for d in $MODEL_DIRS; do
                 if [ -f "$d/$b" ]; then
                     seen="$seen|$b|"
@@ -113,7 +157,7 @@ list_models() {
     fi
 }
 
-find_model() { # $1: подстрока имени (пустая = первая доступная)
+find_model() { # $1: substring (empty = first available)
     for d in $MODEL_DIRS; do
         [ -d "$d" ] || continue
         for f in "$d"/*.cvimodel; do
@@ -124,7 +168,7 @@ find_model() { # $1: подстрока имени (пустая = первая 
     return 1
 }
 
-kind() { # короткая подпись модели для меню
+kind() {
     case "$1" in
     *coco80*) echo "COCO-80, 640x640" ;;
     *person_vehicle*) echo "человек/транспорт (7), 640x384" ;;
@@ -133,81 +177,105 @@ kind() { # короткая подпись модели для меню
     *license_plate*) echo "номер (1), 640x384" ;;
     *fire_smoke*) echo "огонь/дым (2), 640x384" ;;
     *drone*) echo "квадрокоптер (1), 640x640" ;;
-    *det*) echo "YOLOv8-det (классы и размер авто)" ;;
-    *) echo "не YOLOv8-det: бинарь откажется с сообщением" ;;
+    *det*) echo "YOLO-det (классы и размер авто)" ;;
+    *) echo "не YOLO-det: бинарь откажется с сообщением" ;;
     esac
 }
 
-start_app() { # $1: полный путь к модели
-    stop_face || return 1
-    mkdir -p "$SELF_DIR/log"
-    if [ "${SY_KEEP_LOG:-0}" != "1" ] && [ -f "$LOG" ]; then mv -f "$LOG" "$LOG.1"; fi
-    cd "$SELF_DIR" || return 1
-    SY_WEDGE_MS=${SY_WEDGE_MS:-25000} LD_LIBRARY_PATH=$LDP \
-        setsid "$APP" "$1" auto ${SY_HP:-960 540} >> "$LOG" 2>&1 < /dev/null &
-    sleep 2
-    pidof stream_yolo > /dev/null
-}
+start_app() { # $1: model path
+    MODEL=$1
+    [ -x "$APP" ] || { echo "no executable: $APP"; exit 1; }
+    [ -x "$SELF/run_stream.sh" ] || { echo "no run_stream.sh"; exit 1; }
 
-run_path() { # $1: полный путь к модели
-    echo "остановка прошлого экземпляра..."
-    stop_app || { echo "не смог остановить stream_yolo"; exit 1; }
-    if start_app "$1"; then
-        echo "запущено: ${1##*/}"
-        echo "поток MJPEG: http://<IP>:${SY_HTTP_PORT:-7777}/   лог: $LOG"
-    else
-        echo "старт не удался, смотри $LOG"
-        exit 1
+    stop_app >/dev/null || exit 1
+    stop_face || exit 1
+
+    mkdir -p "$SELF/log" "$(dirname "$LOG")"
+    if [ "${SY_KEEP_LOG:-0}" != "1" ] && [ -f "$LOG" ]; then
+        mv -f "$LOG" "$LOG.1"
     fi
+    : > "$LOG"
+    printf '%s\n' "$MODEL" > "$SELF/log/last_model"
+
+    HP=${SY_HP:-"960 540"}
+    # shellcheck disable=SC2086
+    set -- $HP
+    W=${1:-960}
+    H=${2:-540}
+
+    SY_WEDGE_MS=${SY_WEDGE_MS:-25000} \
+        setsid "$SELF/run_stream.sh" "$MODEL" auto "$W" "$H" \
+        >> "$LOG" 2>&1 < /dev/null &
+    echo $! > "$APP_PID"
+
+    sleep 3
+    P=$(app_pid) || P=
+    if [ -n "$P" ]; then
+        echo "started: ${MODEL##*/}"
+        echo "  MJPEG http://<IP>:${SY_HTTP_PORT:-7777}/ , log $LOG (pid $P)"
+        return 0
+    fi
+    echo "did not start; see $LOG"
+    tail -n 20 "$LOG" 2>/dev/null || true
+    exit 1
 }
 
-case "$1" in
+run_path() {
+    start_app "$1"
+}
+
+case "${1:-}" in
 stop)
     stop_app
     exit $?
     ;;
 status)
-    P=$(pidof stream_yolo)
+    P=$(app_pid) || P=
     if [ -n "$P" ]; then
-        echo "stream_yolo: работает (pid $P)"
-        grep "MJPEG on" "$LOG" 2>/dev/null | tail -1
-        grep "^\[stream\]" "$LOG" 2>/dev/null | tail -1
-        echo "поток MJPEG: http://<IP>:7777/"
+        echo "stream_yolo: running (pid $P)"
+        grep "^\[stream\]" "$LOG" 2>/dev/null | tail -1 || true
+        echo "MJPEG: http://<IP>:${SY_HTTP_PORT:-7777}/"
     else
-        echo "stream_yolo: не запущен (лог: $LOG)"
+        echo "stream_yolo: not running (log: $LOG)"
     fi
     exit 0
     ;;
 log)
     tail -f "$LOG"
     ;;
-restart | auto)
+restart)
+    M=$(cat "$SELF/log/last_model" 2>/dev/null || true)
+    [ -n "$M" ] && [ -f "$M" ] || M=$(find_model "${SY_MODEL:-coco80}") || M=$(find_model "")
+    [ -n "$M" ] || { echo "no models in: $MODEL_DIRS"; exit 1; }
+    run_path "$M"
+    ;;
+auto)
     M=$(find_model "${SY_MODEL:-coco80}") || M=$(find_model "")
-    [ -n "$M" ] || { echo "нет моделей в: $MODEL_DIRS"; exit 1; }
+    [ -n "$M" ] || { echo "no models in: $MODEL_DIRS"; exit 1; }
     run_path "$M"
     ;;
 "")
-    echo "=== Модели (*.cvimodel) ==="
+    echo "=== models (*.cvimodel) ==="
     i=0
     for b in $(list_models); do
         i=$((i + 1))
         echo "  $i) $b  --  $(kind "$b")"
     done
-    if [ "$i" = "0" ]; then echo "нет моделей в: $MODEL_DIRS"; exit 1; fi
-    echo "  0) выход"
-    printf "Выбор: "
-    read sel
+    if [ "$i" = "0" ]; then echo "no models in: $MODEL_DIRS"; exit 1; fi
+    echo "  0) exit"
+    printf "Choice: "
+    read -r sel
     case "$sel" in
-    "" | *[!0-9]*) echo "нужен номер пункта"; exit 1 ;;
+    "" | *[!0-9]*) echo "a number is required"; exit 1 ;;
     esac
     [ "$sel" = "0" ] && exit 0
-    if [ "$sel" -lt 1 ] || [ "$sel" -gt "$i" ]; then echo "нет такого пункта"; exit 1; fi
+    if [ "$sel" -lt 1 ] || [ "$sel" -gt "$i" ]; then echo "no such item"; exit 1; fi
     b=$(list_models | sed -n "${sel}p")
-    M=$(find_model "${b%.cvimodel}") || { echo "модель не найдена"; exit 1; }
+    M=$(find_model "${b%.cvimodel}") || { echo "model not found"; exit 1; }
     run_path "$M"
     ;;
 *)
-    M=$(find_model "$1") || { echo "модель '$1' не найдена в: $MODEL_DIRS"; exit 1; }
+    M=$(find_model "$1") || { echo "model '$1' not found in: $MODEL_DIRS"; exit 1; }
     run_path "$M"
     ;;
 esac

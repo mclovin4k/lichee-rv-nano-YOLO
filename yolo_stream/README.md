@@ -1,11 +1,24 @@
 # stream_yolo — камера → NPU-детектор → MJPEG на LicheeRV Nano (SG2002/CV181x)
 
-Поток MJPEG 960×540 @30 fps с рамками YOLOv8, посчитанными на NPU, и HTTP-сервером
-на порту 7777 для VLC/ffplay (разрешение задаёт `SY_HP="W H"`). Кадры не
-конвертируются в BGR и не копируются через `cv::Mat`: VPSS отдаёт NV21, и этот же
-буфер идёт и в аппаратный JPEG, и (копией с letterbox) в детектор. Изначально
-репозиторий основан на [ret7020/LicheeRVNano](https://github.com/ret7020/LicheeRVNano);
-текущая реализация переписана (см. ниже).
+Поток MJPEG 960×540 @30 fps с рамками YOLOv8, посчитанными на NPU, и
+HTTP-сервером на порту 7777 для VLC/ffplay (разрешение задаёт `SY_HP="W H"`).
+Кадры не конвертируются в BGR и не копируются через `cv::Mat`: VPSS отдаёт
+NV21, и этот же буфер идёт и в аппаратный JPEG, и (копией с letterbox) в
+детектор. Изначально проект основан на
+[ret7020/LicheeRVNano](https://github.com/ret7020/LicheeRVNano); текущая
+реализация переписана (см. ниже).
+
+## Состав
+
+| Что | Где |
+|---|---|
+| Исходники | `main.cpp`, `yolo8.c`, `vpss_det.c`, `venc_jpeg.c`, `draw_nv21.c`, `MJPEGWriter.*` |
+| Готовый бинарь и runtime | `dist/board/stream_yolo`, `dist/board/runtime/` |
+| Модели | `dist/board/models/` |
+| Запуск/остановка | `dist/board/start_stream.sh`, `dist/board/run_stream.sh` |
+| Установщик по SSH | `install.sh` |
+| Сборка | `CMakeLists.txt`, `cmake/`, `scripts/`, `patches/` |
+| Контрольные суммы | `dist/md5sums.txt` |
 
 ## Архитектура
 
@@ -59,9 +72,11 @@ GC4653 (MIPI CSI; адрес на I2C и lane_id MIPI-пар — из /mnt/data/
 ## Известный дефект платформы (cvi-tpu, «run dmabuf timeout»)
 
 Драйвер TPU периодически блокирует forward в `cvi_tpu_ioctl`; своё ожидание
-он отпускает по собственному таймауту **~60 с** (в dmesg — `run dmabuf timeout`).
-В комплекте `dist/tpu-fix/` — пропатченный `soph_tpu.ko`: таймаут ожидания
-снижен до ~1 с (замена в `/mnt/system/ko` + ребут, см. `dist/tpu-fix/README.md`).
+он отпускает по собственному таймауту **~60 с** (в dmesg — `run dmabuf
+timeout`). Готовый патчер `soph_tpu.ko` лежит в `../tpu-fix/`: он снижает
+ожидание до ~1 с. `.ko` в репозиторий не коммитится — патчер работает на
+плате и делает резервную копию оригинала (см. `../tpu-fix/README.md`).
+
 Что выяснено замерами (на исходном драйвере):
 
 - клин приходит тем раньше, чем горячее конвейер: на 30 fps-потоке первый —
@@ -116,75 +131,106 @@ GC4653 (MIPI CSI; адрес на I2C и lane_id MIPI-пар — из /mnt/data/
 
 В `dist/board/models/` лежат 7 int8-моделей для cv181x: шесть штатных
 YOLOv8n-det (COCO-80, человек/транспорт, каска, светофор, номер, огонь/дым)
-и детектор квадрокоптеров `yolov11n_det_drone_640_640` (YOLO11n, 1 класс).
-Дрон-модель сейчас **v2**: дообучена от общей kc34251-модели на доменных
-кадрах (дрон в руке / на столе / на полке вдали) + негативах (шнурок худи,
-сцена без дрона), INT8-калибровка пересчитана на доменных кадрах. Итог на
-плате: вблизи 0.84, вдали 0.90 (было 0.32 / 0.01), фон 0.002. Прежняя общая
-модель сохранена как `yolov11n_det_drone_v1_generic.cvimodel.bak` — она лучше
-обобщает на другие дроны (v2 специализирована под конкретный). Любая другая
-YOLOv8/YOLO11-det модель подхватывается бинарём автоматически: число классов
-и размер входа он читает из тензоров (`auto`-режим).
+и детектор квадрокоптеров `yolov11n_det_drone_640_640` (YOLO11n, 1 класс,
+md5 `d479ed5849723b9137d71fd18cc3d4ba`). Дрон-модель — одна общая версия,
+без отдельной «v2». Она является производной Ultralytics YOLO11n
+(AGPL-3.0); условия и источники — в `../THIRD_PARTY_NOTICES.md`.
 
-Пайплайн дрон-модели (для воспроизведения и дообучения) —
-`scripts/model-drone/`: ultralytics-экспорт ONNX с «сырыми» ветвями головы
-(6 выходов, без DFL/NMS), затем tpu-mlir 1.30.2 (model_transform →
-run_calibration на кадрах с дронами → model_deploy `--chip cv181x` INT8).
-
-Дообучение v2 (рецепт): 30 эпох YOLO11n, imgsz 640, batch 6, CPU, AdamW,
-mosaic выключен последние 10 эпох, на 839 кадрах (домен ×1–2 + негативы +
-463 кадра kc34251), val 28 kc; затем перекалибровка INT8 на 507 кадрах
-(kc + домен). Веса/ONNX/лог — `archive/model-tests-2026-10-19/drone-v2/`.
+Любая другая YOLOv8/YOLO11-det модель подхватывается бинарём автоматически:
+число классов и размер входа он читает из тензоров (`auto`-режим).
 
 ## Сборка
 
-Нужны тулчейн (riscv64 musl) и SDK:
+Нужны RISC-V musl toolchain, SDK и OpenCV:
+
+- тулчейн [musl.cc](https://musl.cc/) `riscv64-linux-musl-cross`
+  (GCC 11.2.1) или Sipeed/Sophgo с префиксом `riscv64-unknown-linux-musl-`;
+- [milkv-duo/cvitek-tdl-sdk-sg200x](https://github.com/milkv-duo/cvitek-tdl-sdk-sg200x)
+  — middleware-заголовки и `libvenc.so`/`libsys.so`, коммит зафиксирован в
+  `scripts/fetch-deps.sh`;
+- официальный [nihui/opencv-mobile v36](https://github.com/nihui/opencv-mobile/releases/tag/v36)
+  (`opencv-mobile-4.13.0.zip`, Apache-2.0) + патч
+  `patches/opencv-mobile-4.13.0-cvi-capture.patch`.
+
+Всё скачивается и собирается скриптами:
 
 ```sh
-# приложение (в yolo_stream/build)
-COMPILER=/path/to/riscv-tc/bin SDK_PATH=/path/to/cvisdk make -j
-
-# opencv-mobile с CVI-бэкендом поверх чистого opencv-mobile-4.13.0
-cd /path/to/opencv-mobile-4.13.0
-git apply /path/to/lichee/yolo_stream/patches/opencv-mobile-4.13.0-cvi-capture.patch
-# далее обычная сборка build-rv для личерв-нано, затем make install
+cd yolo_stream
+./scripts/fetch-deps.sh       # тулчейн, SDK, исходники OpenCV + патч
+./scripts/build-opencv.sh     # OpenCV в .deps/opencv-install
+./scripts/build.sh            # build/bin/stream_yolo
 ```
 
-Патч содержит весь CVI-бэкенд: сырой NV21-режим с кэшем маппингов, возврат
-зависшей VPSS-группы, поддержку 640×640 и т.п.
-
-## Деплой и запуск на плате
+Или с готовыми путями:
 
 ```sh
-scp build/bin/stream_yolo root@<IP>:/root/stream_yolo.new
-ssh root@<IP> 'mv /root/stream_yolo.new /root/stream_yolo; chmod +x /root/stream_yolo'
+TOOLCHAIN_PATH=/path/to/riscv64-linux-musl-cross \
+CVISDK_PATH=/path/to/cvitek-tdl-sdk-sg200x \
+OpenCV_DIR=/path/to/opencv/lib/cmake/opencv4 \
+./scripts/build.sh
 ```
 
-На плате разложены скрипты (см. `scripts/` и комплект `dist/board/`):
+`TOOLCHAIN_PATH` читается и из окружения, и через `-DTOOLCHAIN_PATH`; для
+`try_compile` надёжнее экспортировать его. `scripts/fetch-deps.sh` качает
+только нужные файлы SDK (sparse checkout), без примеров и бинарей.
 
-- `/root/start_stream.sh` — меню моделей из `/root/models`; `auto` — модель по
-  умолчанию без меню; прошлый экземпляр гасится, лог `/root/log/stream.log`
-  сдвигается в `.1`; модели из `/root/models/models.order` печатаются в конце
-  меню (в порядке добавления) — так новая модель, залитая утилитой, оказывается
-  последней;
-- автозапуск не ставится: после загрузки поток запускается вручную. Камеру
-  штатный образ настраивает сам по `/mnt/data/sensor_cfg.ini` (адрес матрицы
-  на I2C и `lane_id` MIPI-пар); `s.sh`/`S99z-*` с `devmem` и pinmux в комплект
-  не входят. Супервизора нет — клин TPU приложение переживает само.
-
-Ручной запуск:
+## Установка на плату
 
 ```sh
-ssh root@<IP> '/root/start_stream.sh'          # меню моделей
-ssh root@<IP> '/root/start_stream.sh auto'     # без меню
-ssh root@<IP> '/root/start_stream.sh restart'  # перезапуск
+chmod +x install.sh
+./install.sh                 # спросит IP платы
+BOARD_IP=<IP> ./install.sh
+TPU_PATCH=1 ./install.sh <IP>   # ещё и фикс таймаута TPU
 ```
 
-`face_stream` из комплекта `lichee-face-stream` занимает ту же камеру и порт
-7777, поэтому режимы взаимоисключающие: `start_stream.sh` сам останавливает
-`face_stream`, а `start_face.sh start` сам останавливает `stream_yolo`.
+Установщик копирует пакет в `/root/yolo_stream`, сохраняет уже залитые
+модели и `/root/faces`, сверяет md5 и **не** добавляет автозапуск. Адрес
+платы не фиксирован: в разных сетях (USB/RNDIS, Wi-Fi, Ethernet) он свой.
 
-Клиент: `vlc http://<IP>:7777/` или `ffplay -i http://<IP>:7777/`.
+Камера настраивается штатным образом по `/mnt/data/sensor_cfg.ini`
+(I2C-адрес матрицы и `lane_id` MIPI-пар). Скрипты не трогают pinmux и
+`/dev/mem`; если файла нет, установщик предупредит.
+
+### Ручная установка
+
+```sh
+tar -C dist/board -cf - . | ssh root@<IP> 'rm -rf /root/yolo_stream; mkdir -p /root/yolo_stream; tar -xf - -C /root/yolo_stream'
+ssh root@<IP> 'chmod +x /root/yolo_stream/stream_yolo /root/yolo_stream/*.sh'
+```
+
+## Запуск
+
+```sh
+ssh root@<IP> '/root/yolo_stream/start_stream.sh'          # меню моделей
+ssh root@<IP> '/root/yolo_stream/start_stream.sh auto'     # без меню
+ssh root@<IP> '/root/yolo_stream/start_stream.sh status'
+ssh root@<IP> '/root/yolo_stream/start_stream.sh stop'
+```
+
+- Поток: `http://<IP>:7777/` (MJPEG, VLC/ffplay)
+- Лог: `/root/yolo_stream/log/stream.log` (прошлый при старте уезжает в `.1`)
+- Модели: `dist/board/models/` рядом со скриптом, затем `/root/models`
+- Last model: `/root/yolo_stream/log/last_model`
+
+`stream_yolo` и `face_stream` из соседнего проекта `yolo_face` занимают одну
+камеру и порт 7777, поэтому режимы взаимоисключающие: `start_stream.sh`
+останавливает `face_stream`, а `start_face.sh start` останавливает
+`stream_yolo`. Автозапуск не ставится — режим выбирается вручную после
+загрузки.
+
+### Загрузчик
+
+По умолчанию бинарь запускается напрямую и использует системный
+`/lib/ld-musl-riscv64.so.1`. Если в образе нет системного загрузчика или он
+несовместим, `run_stream.sh` берёт `runtime/ld-musl-riscv64.so.1`:
+
+```sh
+SY_BUNDLED_LOADER=1 /root/yolo_stream/start_stream.sh auto
+```
+
+При явном запуске через загрузчик `comm` процесса становится
+`ld-musl-riscv64`, поэтому скрипт хранит pid в `/tmp/yolo_stream.app.pid`,
+а не ищет процесс через `pidof`.
 
 ## Ручки окружения (без пересборки)
 
@@ -207,9 +253,11 @@ ssh root@<IP> '/root/start_stream.sh restart'  # перезапуск
 | `SY_MAX_BOXES` | 16 | не публиковать результат, где рамок больше N (битый кадр); `0` — выключить |
 | `SY_DUMP_NV21` | выкл. | записать первый сырой NV21-кадр в файл (отладка) |
 | `SY_TEST_NV21` | выкл. | офлайн-прогон детектора по NV21-файлу и выход (отладка) |
+| `SY_BUNDLED_LOADER` | 0 | `1` — запуск через встроенный musl loader |
 
-Аргументы командной строки: `stream_yolo <модель|auto> <класс|auto> <W> <H>`
-(`auto` — число классов бинарь читает из тензоров модели).
+Аргументы командной строки: `stream_yolo <путь к .cvimodel> <классов|auto> <W> [H]`
+(`auto` — число классов бинарь читает из тензоров модели; обычно этот
+аргумент подставляет `start_stream.sh`).
 
 Имена классов в `.cvimodel` не хранятся. Положите рядом файл
 `<имя_модели>.names` (по одному имени в строке) — `stream_yolo` подпишет
@@ -219,7 +267,7 @@ ssh root@<IP> '/root/start_stream.sh restart'  # перезапуск
 ## Проверка
 
 ```sh
-ssh root@<IP> 'grep "\[stream\]" /root/log/stream.log | tail -3'
+ssh root@<IP> 'grep "\[stream\]" /root/yolo_stream/log/stream.log | tail -3'
 # [stream] frames=1080 fps=30.0 det=83.8ms (prep=38.3 fwd=37.0 dec=10.7) boxes=1 det_age=0.0s
 #   fps      — частота потока (не зависит от детектора)
 #   det      — EMA времени одного инференса (prep/fwd/dec — подготовка входа,
@@ -227,7 +275,7 @@ ssh root@<IP> 'grep "\[stream\]" /root/log/stream.log | tail -3'
 #   boxes    — сколько рамок в последнем результате
 #   det_age  — возраст последних рамок (растёт во время клина TPU)
 
-ssh root@<IP> 'grep "^det:" /root/log/stream.log | tail -3'
+ssh root@<IP> 'grep "^det:" /root/yolo_stream/log/stream.log | tail -3'
 # det: n=1 max=0.636 | 72:0.64 [325 297 585 639]
 #   n        — число рамок после NMS
 #   max      — лучший скор сети в кадре (виден, даже если рамок нет)
@@ -235,7 +283,7 @@ ssh root@<IP> 'grep "^det:" /root/log/stream.log | tail -3'
 
 # во время клина TPU в кадре видна надпись no det Ns (рамки старше TTL
 # не рисуются), а опоздавшие результаты отбрасываются:
-ssh root@<IP> 'grep -c "dropped stale result" /root/log/stream.log'
+ssh root@<IP> 'grep -c "dropped stale result" /root/yolo_stream/log/stream.log'
 
 # кадр из потока (на хосте):
 curl -s -m 5 http://<IP>:7777/ | head -c 200000 > /tmp/m.bin
@@ -251,3 +299,4 @@ curl -s -m 5 http://<IP>:7777/ | head -c 200000 > /tmp/m.bin
   таймаута (с фиксом TPU — до ~1 с); `start_stream.sh` умеет ждать его
   исчезновения, поэтому такого процесса в паре «старый/новый» не возникает.
 - MJPEG q75 при 30 fps — около 9 Мбит/с; для экономии есть `SY_ENC_EVERY`.
+- Лицензии сторонних моделей и библиотек — в `../THIRD_PARTY_NOTICES.md`.

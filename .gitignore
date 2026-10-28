@@ -1,11 +1,21 @@
+# Build trees and downloaded dependencies
 **/build/
 **/build-*/
-yolo_stream/build2/
-capture_test/libs/
-yolo_stream/libs/
-*.o
+**/.deps/
+**/.venv/
+**/venv/
+
+# Local archives / kernel modules / logs
+*.tar.gz
+*.tgz
+*.ko
 *.log
-yolo_stream/archive/
-lichee-*.tar.gz*
+archive/
+
+# Python
 __pycache__/
 *.pyc
+
+# Editor/OS noise
+.DS_Store
+*.swp
