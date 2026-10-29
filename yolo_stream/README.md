@@ -143,8 +143,11 @@ md5 `d479ed5849723b9137d71fd18cc3d4ba`). Дрон-модель — одна об
 
 Нужны RISC-V musl toolchain, SDK и OpenCV:
 
-- тулчейн [musl.cc](https://musl.cc/) `riscv64-linux-musl-cross`
-  (GCC 11.2.1) или Sipeed/Sophgo с префиксом `riscv64-unknown-linux-musl-`;
+- RISC-V musl toolchain. `scripts/fetch-deps.sh` по умолчанию скачивает
+  [musl-cross 20261001](https://github.com/musl-cross/musl-cross/releases/tag/20261001)
+  (`riscv64-unknown-linux-musl`, SHA256 зафиксирован); поддерживаются также
+  [musl.cc](https://musl.cc/) `riscv64-linux-musl-cross` (GCC 11.2.1) и
+  Sipeed/Sophgo с префиксом `riscv64-unknown-linux-musl-`;
 - [milkv-duo/cvitek-tdl-sdk-sg200x](https://github.com/milkv-duo/cvitek-tdl-sdk-sg200x)
   — middleware-заголовки и `libvenc.so`/`libsys.so`, коммит зафиксирован в
   `scripts/fetch-deps.sh`;
@@ -173,6 +176,9 @@ OpenCV_DIR=/path/to/opencv/lib/cmake/opencv4 \
 `TOOLCHAIN_PATH` читается и из окружения, и через `-DTOOLCHAIN_PATH`; для
 `try_compile` надёжнее экспортировать его. `scripts/fetch-deps.sh` качает
 только нужные файлы SDK (sparse checkout), без примеров и бинарей.
+
+Ту же сборку можно запустить на GitHub: вкладка **Actions** → **build** →
+**Run workflow**. Готовый `stream_yolo` будет в артефакте `yolo_stream-bin`.
 
 ## Установка на плату
 

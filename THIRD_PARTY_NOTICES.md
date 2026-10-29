@@ -134,6 +134,17 @@ TDL SDK. **Явной лицензии в источнике нет.** Они в
   Exception разрешает распространять программы, слинкованные с этими
   библиотеками, на любых условиях.
 
+## Инструменты сборки
+
+`scripts/fetch-deps.sh` скачивает RISC-V musl toolchain с GitHub:
+[musl-cross 20261001](https://github.com/musl-cross/musl-cross/releases/tag/20261001),
+`riscv64-unknown-linux-musl.tar.xz` (SHA256
+`054acc4b5baa886363ce5acaa6a015fd90d2f715b2e4324813fd4d49d717362f`).
+Внутри — GCC, binutils и musl; они распространяются по GPL-3.0/LGPL-2.1/MIT
+с соответствующими исключениями. Toolchain не входит в репозиторий и
+используется только на этапе сборки. Поддерживается и `musl.cc`
+`riscv64-linux-musl-cross` (GCC 11.2.1) через переменную `TOOLCHAIN_URL`.
+
 ## yolo_studio (Python)
 
 `yolo_studio/requirements.txt` ставит зависимости из PyPI; в репозитории их

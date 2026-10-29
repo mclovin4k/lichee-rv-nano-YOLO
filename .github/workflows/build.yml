@@ -5,10 +5,18 @@ on:
   pull_request:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   riscv:
     name: ${{ matrix.project }}
     runs-on: ubuntu-latest
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
@@ -26,7 +34,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ matrix.project }}/.deps
-          key: deps-${{ matrix.project }}-${{ hashFiles(format('{0}/scripts/fetch-deps.sh', matrix.project), format('{0}/patches/*.patch', matrix.project)) }}
+          key: deps-${{ matrix.project }}-${{ hashFiles(format('{0}/scripts/fetch-deps.sh', matrix.project), format('{0}/scripts/build-opencv.sh', matrix.project), format('{0}/patches/*.patch', matrix.project)) }}
+          restore-keys: |
+            deps-${{ matrix.project }}-
 
       - name: Fetch toolchain, SDK and OpenCV source
         working-directory: ${{ matrix.project }}
@@ -47,10 +57,24 @@ jobs:
           path: |
             ${{ matrix.project }}/build/bin/*
           if-no-files-found: error
+          retention-days: 30
+
+      - name: Write job summary
+        run: |
+          {
+            echo "### ${{ matrix.project }}"
+            echo ""
+            echo "Собранный бинарник лежит в артефакте \`${{ matrix.project }}-bin\`."
+            echo ""
+            echo '```'
+            ls -lh "${{ matrix.project }}/build/bin"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
 
   studio:
     name: yolo_studio (python)
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

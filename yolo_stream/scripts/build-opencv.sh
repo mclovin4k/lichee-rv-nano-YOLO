@@ -24,8 +24,10 @@ die() { printf '\nERROR: %s\n' "$*" >&2; exit 1; }
 
 [ -f "$OPENCV_SRC/CMakeLists.txt" ] || \
     die "OpenCV source not found: $OPENCV_SRC (run scripts/fetch-deps.sh)"
-[ -x "$TOOLCHAIN_PATH/bin/riscv64-linux-musl-gcc" ] || \
+if [ ! -x "$TOOLCHAIN_PATH/bin/riscv64-linux-musl-gcc" ] && \
+   [ ! -x "$TOOLCHAIN_PATH/bin/riscv64-unknown-linux-musl-gcc" ]; then
     die "toolchain not found: $TOOLCHAIN_PATH (run scripts/fetch-deps.sh)"
+fi
 
 say "configuring OpenCV ($OPENCV_SRC)"
 set --

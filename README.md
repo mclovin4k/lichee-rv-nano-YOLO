@@ -49,12 +49,29 @@ cd yolo_stream
 ./scripts/build.sh
 ```
 
-Аналогично для `yolo_face`. Проверенный тулчейн — GCC 11.2.1 (musl.cc или
-Sipeed/Sophgo, префикс `riscv64-unknown-linux-musl-`), SDK —
+Аналогично для `yolo_face`. `scripts/fetch-deps.sh` по умолчанию скачивает
+[musl-cross 20261001](https://github.com/musl-cross/musl-cross/releases/tag/20261001)
+(`riscv64-unknown-linux-musl`, SHA256 зафиксирован); поддерживаются также
+`musl.cc` `riscv64-linux-musl-cross` (GCC 11.2.1) и Sipeed/Sophgo. SDK —
 [milkv-duo/cvitek-tdl-sdk-sg200x](https://github.com/milkv-duo/cvitek-tdl-sdk-sg200x),
 OpenCV — официальный [opencv-mobile v36](https://github.com/nihui/opencv-mobile/releases/tag/v36)
 (4.13.0, Apache-2.0) с патчем CVI-бэкенда. Точные версии и коммиты
 зафиксированы в `scripts/fetch-deps.sh`.
+
+### Сборка на GitHub
+
+Репозиторий уже содержит workflow `.github/workflows/build.yml`. Он собирает
+`stream_yolo` и `face_stream` на Ubuntu runner при каждом push, а также
+запускается вручную:
+
+1. открой вкладку **Actions** → **build**;
+2. нажми **Run workflow** → **Run workflow**;
+3. после завершения скачай артефакты `yolo_stream-bin` и `yolo_face-bin`
+   (внутри — готовые бинарники `build/bin/*`).
+
+Кросс-компиляция и OpenCV выполняются на GitHub, локальный toolchain не
+нужен. Артефакты Actions хранятся ограниченное время; для долгосрочной
+публикации прикрепи бинарники к GitHub Release.
 
 ## Что важно знать
 
@@ -66,7 +83,14 @@ OpenCV — официальный [opencv-mobile v36](https://github.com/nihui/o
 - **Лицензии сторонних моделей и библиотек** — в
   [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md), тексты — в `LICENSES/`.
   Часть вендорных библиотек Cvitek/Sophgo идёт без явной лицензии; модели
-  YOLO — производные Ultralytics (AGPL-3.0). Перед публикацией или
-  коммерческим использованием прочитайте notices.
+  YOLO — производные Ultralytics (AGPL-3.0). Перед коммерческим
+  использованием прочитайте notices.
 - **Автозапуск не ставится.** Плата после загрузки свободна; поток или лица
   запускаются вручную.
+
+## Лицензия
+
+Оригинальный код репозитория распространяется по MIT — см. [`LICENSE`](LICENSE).
+Сторонние библиотеки, runtime и модели остаются под своими лицензиями; их
+условия и источники перечислены в [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md)
+и `LICENSES/`. MIT не заменяет лицензии сторонних компонентов.

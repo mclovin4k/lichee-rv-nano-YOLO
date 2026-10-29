@@ -117,9 +117,11 @@ Liveness-модель TDL (`cls_rgbliveness_256_256`) на этой прошив
 
 Нужны:
 
-- RISC-V musl toolchain. Проверено на
-  [musl.cc](https://musl.cc/) `riscv64-linux-musl-cross` (GCC 11.2.1);
-  подходит и тулчейн Sipeed/Sophgo с префиксом `riscv64-unknown-linux-musl-`.
+- RISC-V musl toolchain. `scripts/fetch-deps.sh` по умолчанию скачивает
+  [musl-cross 20261001](https://github.com/musl-cross/musl-cross/releases/tag/20261001)
+  (`riscv64-unknown-linux-musl`, SHA256 зафиксирован); поддерживаются также
+  [musl.cc](https://musl.cc/) `riscv64-linux-musl-cross` (GCC 11.2.1) и
+  Sipeed/Sophgo с префиксом `riscv64-unknown-linux-musl-`.
 - SDK [milkv-duo/cvitek-tdl-sdk-sg200x](https://github.com/milkv-duo/cvitek-tdl-sdk-sg200x)
   (заголовки middleware v2 и `cvi_tdl`, `libvenc.so`, `libsys.so`),
   зафиксирован коммит в `scripts/fetch-deps.sh`.
@@ -147,6 +149,9 @@ OpenCV_DIR=/path/to/opencv/lib/cmake/opencv4 \
 `TOOLCHAIN_PATH` читается и из окружения, и через `-DTOOLCHAIN_PATH`; для
 `try_compile` надёжнее экспортировать его. `scripts/fetch-deps.sh` качает
 только нужные файлы SDK (sparse checkout), без примеров и бинарей.
+
+Ту же сборку можно запустить на GitHub: вкладка **Actions** → **build** →
+**Run workflow**. Готовый `face_stream` будет в артефакте `yolo_face-bin`.
 
 ## Модели и лицензии
 

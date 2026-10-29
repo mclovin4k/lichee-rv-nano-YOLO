@@ -4,7 +4,7 @@
 #   ./scripts/fetch-deps.sh
 #
 # Sources:
-#   - RISC-V musl toolchain: https://musl.cc/
+#   - RISC-V musl toolchain: https://github.com/musl-cross/musl-cross/releases
 #   - cvitek-tdl-sdk-sg200x: https://github.com/milkv-duo/cvitek-tdl-sdk-sg200x
 #   - opencv-mobile 4.13.0:  https://github.com/nihui/opencv-mobile (Apache-2.0)
 #
@@ -17,8 +17,8 @@ ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 DEPS=${DEPS_DIR:-"$ROOT/.deps"}
 mkdir -p "$DEPS"
 
-TOOLCHAIN_URL=${TOOLCHAIN_URL:-https://musl.cc/riscv64-linux-musl-cross.tgz}
-TOOLCHAIN_SHA256=${TOOLCHAIN_SHA256:-}
+TOOLCHAIN_URL=${TOOLCHAIN_URL:-https://github.com/musl-cross/musl-cross/releases/download/20261001/riscv64-unknown-linux-musl.tar.xz}
+TOOLCHAIN_SHA256=${TOOLCHAIN_SHA256:-054acc4b5baa886363ce5acaa6a015fd90d2f715b2e4324813fd4d49d717362f}
 TC_DIR="$DEPS/riscv64-linux-musl-cross"
 
 SDK_REPO=${SDK_REPO:-https://github.com/milkv-duo/cvitek-tdl-sdk-sg200x.git}
@@ -72,18 +72,40 @@ fetch_commit() { # fetch_commit <repo> <commit> <dir>
     git -C "$3" checkout -q FETCH_HEAD
 }
 
-if [ ! -x "$TC_DIR/bin/riscv64-linux-musl-gcc" ]; then
+toolchain_prefix() { # print the compiler prefix if the toolchain is complete
+    if [ -x "$TC_DIR/bin/riscv64-linux-musl-gcc" ]; then
+        echo riscv64-linux-musl
+    elif [ -x "$TC_DIR/bin/riscv64-unknown-linux-musl-gcc" ]; then
+        echo riscv64-unknown-linux-musl
+    else
+        return 1
+    fi
+}
+
+if ! toolchain_prefix >/dev/null; then
     say "toolchain: $TOOLCHAIN_URL"
-    download "$TOOLCHAIN_URL" "$DEPS/toolchain.tar.gz"
+    download "$TOOLCHAIN_URL" "$DEPS/toolchain.download"
     if [ -n "$TOOLCHAIN_SHA256" ]; then
-        got=$(sha256_of "$DEPS/toolchain.tar.gz")
+        got=$(sha256_of "$DEPS/toolchain.download")
         [ "$got" = "$TOOLCHAIN_SHA256" ] || \
             die "toolchain sha256 mismatch: got $got, expected $TOOLCHAIN_SHA256"
     fi
-    tar -xzf "$DEPS/toolchain.tar.gz" -C "$DEPS"
-    rm -f "$DEPS/toolchain.tar.gz"
+    tar -xf "$DEPS/toolchain.download" -C "$DEPS"
+    rm -f "$DEPS/toolchain.download"
+
+    # musl.cc unpacks as riscv64-linux-musl-cross, while the
+    # musl-cross GitHub release unpacks as riscv64-unknown-linux-musl.
+    # Keep one stable directory name for build.sh and the CI cache.
+    for d in "$DEPS/riscv64-linux-musl-cross" "$DEPS/riscv64-unknown-linux-musl"; do
+        [ -d "$d" ] || continue
+        if [ "$d" != "$TC_DIR" ]; then
+            rm -rf "$TC_DIR"
+            mv "$d" "$TC_DIR"
+        fi
+        break
+    done
 fi
-[ -x "$TC_DIR/bin/riscv64-linux-musl-gcc" ] || \
+toolchain_prefix >/dev/null || \
     die "toolchain not unpacked as expected: $TC_DIR"
 
 if [ ! -f "$SDK_DIR/.ready" ]; then
