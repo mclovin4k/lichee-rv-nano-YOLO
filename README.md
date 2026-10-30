@@ -68,11 +68,12 @@ libc, `libgcc`, `libatomic` and vendor libraries are always found.
 - **Windows:** run `LicheeYOLOStudio.exe`. There is no installer; if
   SmartScreen appears, choose **More info → Run anyway**.
 
-The Qt X11 library `libxcb-cursor.so.0` is bundled in the Linux release. If a
-minimal system still reports a missing xcb plugin, install the distribution
-package (`sudo apt install libxcb-cursor0`, `sudo dnf install
-xcb-util-cursor`, or `sudo pacman -S xcb-util-cursor`); see
-[`yolo_studio/README.md`](yolo_studio/README.md) for details.
+The Qt X11 library `libxcb-cursor.so.0` is bundled in the Linux release. The
+OpenGL/EGL stack comes from the system (`libegl1`, `libgl1`, `libxkbcommon0`,
+`libfontconfig1`, `libdbus-1-3` on Debian/Ubuntu). A normal desktop already has
+them; a minimal image does not, and the executable then prints the exact
+package names to install. See [`yolo_studio/README.md`](yolo_studio/README.md)
+for details and the Wayland fallback.
 
 ## Installing on the board
 

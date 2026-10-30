@@ -32,8 +32,22 @@ chmod +x LicheeYOLOStudio
 
 The Linux build is made on Ubuntu 22.04 and needs glibc 2.35 or newer
 (Ubuntu 22.04+, Debian 12+, Fedora 36+, and similar). Qt's X11 plugins and the
-`libxcb-cursor.so.0` dependency are bundled. If a minimal system still reports
-that the xcb platform plugin cannot load, install the missing X11 libraries:
+`libxcb-cursor.so.0` dependency are bundled, but the OpenGL/EGL stack is taken
+from the system. A normal desktop install already has it; on a minimal image
+install:
+
+```sh
+# Debian/Ubuntu
+sudo apt install libegl1 libgl1 libxkbcommon0 libfontconfig1 libdbus-1-3
+# Fedora
+sudo dnf install mesa-libEGL mesa-libGL libxkbcommon fontconfig dbus-libs
+# Arch
+sudo pacman -S mesa libxkbcommon fontconfig dbus
+```
+
+The executable checks these libraries at startup and prints the exact package
+names when one is missing. If the xcb platform plugin still cannot load, the
+X11 client libraries are missing as well:
 
 ```sh
 # Debian/Ubuntu
