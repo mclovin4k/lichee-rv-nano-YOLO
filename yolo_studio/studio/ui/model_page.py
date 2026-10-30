@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout, QWidget,
 )
 
-from .. import pipeline
+from .. import pipeline, pyenv
 from ..dataset import Dataset
 from .widgets import LogPane, Worker
 
@@ -297,10 +297,8 @@ class ModelPage(QWidget):
             QMessageBox.information(self, "No data.yaml",
                                     "Click “Prepare dataset” first.")
             return
-        ultra = str(self.cfg.get("ultra_python"))
-        if not Path(ultra).is_file():
-            QMessageBox.critical(self, "Python not found",
-                                 f"{ultra} not found. Set the path in Settings.")
+        ultra = self._python("ultra")
+        if ultra is None:
             return
         self.cfg["train_base"] = self.base_model.text().strip() or "yolo11n.pt"
         self.cfg.save()
@@ -338,10 +336,8 @@ class ModelPage(QWidget):
         pt = ds.best_pt() if ds else None
         if ds is None or pt is None:
             return
-        ultra = str(self.cfg.get("ultra_python"))
-        if not Path(ultra).is_file():
-            QMessageBox.critical(self, "Python not found",
-                                 f"{ultra} not found. Set the path in Settings.")
+        ultra = self._python("ultra")
+        if ultra is None:
             return
         self.log.append_line(f"$ ONNX export (imgsz={self.imgsz.value()})…")
         self._run(pipeline.export_onnx, pt, ultra, imgsz=self.imgsz.value(),
@@ -361,10 +357,8 @@ class ModelPage(QWidget):
         onnx = ds.best_onnx() if ds else None
         if ds is None or onnx is None:
             return
-        tpu = str(self.cfg.get("tpu_python"))
-        if not Path(tpu).is_file():
-            QMessageBox.critical(self, "Python not found",
-                                 f"{tpu} not found. Set the path in Settings.")
+        tpu = self._python("tpu")
+        if tpu is None:
             return
         name = self.out_name.text().strip()
         if not name:
@@ -393,6 +387,57 @@ class ModelPage(QWidget):
                                 "cvimodel is ready. Upload it to the board now?") \
                 == QMessageBox.StandardButton.Yes:
             self.main.go_to_board(path)
+
+    # ---------- external python ----------
+
+    def _python(self, kind: str) -> str | None:
+        """The configured or detected interpreter, or None (after telling the
+        user what to install). Detection results are saved back to settings."""
+        info = pyenv.KINDS[kind]
+        key = info["config_key"]
+        configured = str(self.cfg.get(key) or "")
+        exe = pyenv.resolve(kind, configured)
+        if exe is None:
+            self._python_missing(kind)
+            return None
+        if str(exe) != configured:
+            self.cfg[key] = str(exe)
+            self.cfg.save()
+            self.log.append_line(f"{info['label']}: {exe}")
+        return str(exe)
+
+    def _python_missing(self, kind: str) -> None:
+        info = pyenv.KINDS[kind]
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Critical)
+        box.setWindowTitle("Python not found")
+        box.setText(f"No Python environment with {info['install']} was found, "
+                    f"so {info['purpose']} cannot run.")
+        box.setInformativeText(pyenv.missing_help(kind))
+        locate = box.addButton("Locate interpreter…",
+                               QMessageBox.ButtonRole.ActionRole)
+        search = box.addButton("Search again",
+                               QMessageBox.ButtonRole.ActionRole)
+        box.addButton(QMessageBox.StandardButton.Cancel)
+        box.exec()
+        clicked = box.clickedButton()
+        if clicked is locate:
+            path, _ = QFileDialog.getOpenFileName(
+                self, info["label"], str(Path.home()))
+            if not path:
+                return
+            self.cfg[info["config_key"]] = path
+            self.cfg.save()
+            self.log.append_line(f"{info['label']}: {path}")
+        elif clicked is search:
+            self.log.append_line(f"searching for {info['install']}…")
+            exe = pyenv.detect(kind)
+            if exe is None:
+                self.log.append_line(f"{info['install']} was not found")
+                return
+            self.cfg[info["config_key"]] = str(exe)
+            self.cfg.save()
+            self.log.append_line(f"{info['label']}: {exe}")
 
     # ---------- background ----------
 

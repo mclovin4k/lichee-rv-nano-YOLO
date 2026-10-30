@@ -8,6 +8,8 @@ import subprocess
 import threading
 from pathlib import Path
 
+from . import pyenv
+
 TOOLS = Path(__file__).resolve().parent.parent / "tools"
 
 
@@ -62,9 +64,14 @@ def train_local(data_yaml: str | Path, work_dir: str | Path, ultra_python: str,
                 cancel: threading.Event | None = None) -> Path:
     work = Path(work_dir)
     work.mkdir(parents=True, exist_ok=True)
-    yolo_bin = Path(ultra_python).with_name("yolo")
-    if not yolo_bin.is_file():
-        raise PipelineError(f"no yolo CLI next to {ultra_python}")
+    # The CLI sits next to the interpreter: Scripts/yolo.exe on Windows,
+    # bin/yolo elsewhere.
+    yolo_bin = pyenv.sibling(ultra_python, "yolo")
+    if yolo_bin is None:
+        raise PipelineError(
+            f"the 'yolo' command was not found next to {ultra_python}; "
+            "install the tools into that environment:\n"
+            f"  {ultra_python} -m pip install ultralytics")
     cmd = [
         str(yolo_bin), "detect", "train",
         f"data={Path(data_yaml)}",
@@ -132,6 +139,14 @@ def build_cvimodel(onnx: str | Path, calib_dir: str | Path,
     script = TOOLS / "build_cvimodel.sh"
     if not script.is_file():
         raise PipelineError(f"script not found: {script}")
+    shell = shutil.which("sh")
+    if shell is None:
+        raise PipelineError(
+            "cvimodel conversion needs a POSIX shell and tpu-mlir, which only "
+            "run on Linux.\nOn Windows use WSL: install tpu-mlir in a WSL "
+            "environment and set Settings → \"Python tpu-mlir\" to its "
+            "interpreter (for example /home/<user>/.venvs/tpu310/bin/python).\n"
+            "The ONNX file produced here can be converted on any Linux host.")
 
     work = Path(work_dir)
     work.mkdir(parents=True, exist_ok=True)
@@ -147,7 +162,7 @@ def build_cvimodel(onnx: str | Path, calib_dir: str | Path,
     env["IMGSZ"] = str(int(imgsz))
     env["PATH"] = str(Path(tpu_python).parent) + os.pathsep + env.get("PATH", "")
 
-    cmd = ["sh", str(script), str(onnx), str(calib)]
+    cmd = [shell, str(script), str(onnx), str(calib)]
     if sample_image is not None:
         cmd.append(str(sample_image))
     run_stream(cmd, cwd=work, env=env, on_line=on_line, cancel=cancel)

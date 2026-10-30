@@ -115,7 +115,24 @@ python app.py
 ```
 
 The paths to the `ultra` (ultralytics) and `tpu310` (tpu-mlir) environments,
-the board IP, SSH user and password are configured in **Settings…**.
+the board IP, SSH user and password are configured in **Settings…**. Both
+Python fields can be left empty: the application searches `PATH` and the usual
+virtualenv directories (`~/.venvs/<name>`, `~/venvs/<name>`, `.venv`) and
+checks that the interpreter can import `ultralytics` / `tpu_mlir`. The **Detect**
+button runs the same search and fills in the path it finds.
+
+```sh
+# ultralytics (training, ONNX export) — Linux/macOS
+python3 -m venv ~/.venvs/ultra
+~/.venvs/ultra/bin/python -m pip install ultralytics
+
+:: ultralytics — Windows
+py -3 -m venv %USERPROFILE%\.venvs\ultra
+%USERPROFILE%\.venvs\ultra\Scripts\python -m pip install ultralytics
+```
+
+`tpu-mlir` is Linux-only, so cvimodel conversion runs on Linux (or in WSL on
+Windows); the ONNX step works everywhere.
 
 ## Quick start
 
@@ -268,6 +285,21 @@ GitHub Actions builds both executables on every push and attaches them to a
 release for `v*` tags. The workflow runs an offscreen `--smoke-test` on both
 platforms before uploading.
 
+## Troubleshooting
+
+**“Python not found … Set the path in Settings”** — training and ONNX export
+run in a separate environment with `ultralytics`; PyTorch is not bundled. Clear
+**Settings → Python Ultralytics** and press **Detect**, or create the
+environment as shown in *Running from source* and point the field at
+`…/bin/python` (`…\Scripts\python.exe` on Windows). The error dialog also
+offers **Locate interpreter…** and **Search again**.
+
+**“cvimodel conversion needs a POSIX shell”** — `tpu-mlir` only runs on Linux.
+Convert on a Linux host or in WSL; the exported ONNX is portable.
+
+**The window does not open on Linux** — the Qt/X11 libraries listed in
+*Ready-to-run builds* are missing; the launcher prints the exact package names.
+
 ## Limitations
 
 - Labeling is semi-automatic: tracking works well with smooth motion and
@@ -296,6 +328,7 @@ studio/
   camera.py             MJPEG/USB frame source (QThread)
   dataset.py            frames, import, YOLO labels, split, calibration
   tracking.py           optical flow
+  pyenv.py              finds the ultralytics/tpu-mlir interpreters
   pipeline.py           training, ONNX, tpu-mlir
   ui/                   window and pages (capture/label/model/board)
 tools/

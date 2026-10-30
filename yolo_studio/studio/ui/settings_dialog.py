@@ -6,9 +6,10 @@ from pathlib import Path
 
 from PySide6.QtWidgets import (
     QDialog, QDialogButtonBox, QFileDialog, QFormLayout, QHBoxLayout,
-    QLineEdit, QPushButton, QSpinBox, QWidget,
+    QLineEdit, QMessageBox, QPushButton, QSpinBox, QWidget,
 )
 
+from .. import pyenv
 from ..config import Config
 
 
@@ -37,9 +38,9 @@ class SettingsDialog(QDialog):
         form.addRow("Capture stream port:", self.capture_port)
 
         self.ultra = self._path_row(form, "Python Ultralytics:", "ultra_python",
-                                    file_mode=True)
+                                    file_mode=True, detect_kind="ultra")
         self.tpu = self._path_row(form, "Python tpu-mlir:", "tpu_python",
-                                  file_mode=True)
+                                  file_mode=True, detect_kind="tpu")
         self.datasets = self._path_row(form, "Datasets directory:", "dataset_root",
                                        file_mode=False)
 
@@ -52,13 +53,29 @@ class SettingsDialog(QDialog):
         form.addRow(buttons)
 
     def _path_row(self, form: QFormLayout, title: str, key: str,
-                  file_mode: bool) -> QLineEdit:
+                  file_mode: bool, detect_kind: str = "") -> QLineEdit:
         row = QHBoxLayout()
         edit = QLineEdit(str(self.cfg.get(key)))
+        if detect_kind:
+            edit.setPlaceholderText("detected automatically")
         row.addWidget(edit, 1)
         btn = QPushButton("…")
         btn.setFixedWidth(36)
         row.addWidget(btn)
+        if detect_kind:
+            detect = QPushButton("Detect")
+            detect.setToolTip("Search for an interpreter that has the package")
+            row.addWidget(detect)
+
+            def run_detect() -> None:
+                exe = pyenv.detect(detect_kind, edit.text().strip())
+                if exe is None:
+                    QMessageBox.information(self, "Not found",
+                                            pyenv.missing_help(detect_kind))
+                    return
+                edit.setText(str(exe))
+
+            detect.clicked.connect(run_detect)
         form.addRow(title, row)
 
         def browse() -> None:
