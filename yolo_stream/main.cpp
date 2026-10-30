@@ -305,15 +305,15 @@ int main(int argc, char *argv[]) {
                 fflush(stdout);
                 detector.setup_model(model_path, class_cnt, det_thr, 0.5);
             } else if (rc == 0 && frame_age_ms <= (double)det_max_age_ms) {
-                /* Защита от «мусорных» выбросов: изредка (раз в несколько
-                   минут) VPSS/NPU отдаёт результат, в котором модель выдаёт
-                   десятки рамок со score ~1.0 сеткой по краям — координаты
-                   за границами кадра. Это битый вход, а не объекты; если
-                   опубликовать такую пачку, на экране на мгновение мигает
-                   «куча рамок». Нормальная сцена — единицы рамок, поэтому
-                   результат с подозрительно большим их числом не публикуем
-                   (на экране остаются предыдущие свежие рамки).
-                   Порог: SY_MAX_BOXES (по умолчанию 16, 0 = выключить). */
+                /* Protection against garbage bursts: occasionally (once every
+                   few minutes) VPSS/NPU returns a result where the model emits
+                   dozens of boxes with score ~1.0 in a grid along the edges —
+                   coordinates outside the frame. This is a corrupt input, not
+                   objects; publishing such a batch makes a "pile of boxes"
+                   flash on screen for a moment. A normal scene has a handful
+                   of boxes, so a result with a suspiciously large number of
+                   them is not published (the previous fresh boxes stay on
+                   screen). Threshold: SY_MAX_BOXES (default 16, 0 = disable). */
                 static const int max_boxes = [] {
                     const char *e = getenv("SY_MAX_BOXES");
                     return (e != NULL) ? atoi(e) : 16;

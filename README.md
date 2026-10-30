@@ -1,46 +1,107 @@
-# LicheeRV Nano: камера, NPU и распознавание лиц
+# LicheeRV Nano: camera, NPU and face recognition
 
-Рабочий набор для LicheeRV Nano (SG2002 / CV181x) с камерой GC4653:
-MJPEG-поток, детекция YOLO на NPU, распознавание лиц, утилита для съёмки и
-обучения моделей. В репозитории четыре самостоятельных проекта; готовые
-бинари и runtime-библиотеки уже включены, кросс-компиляция для запуска на
-плате не нужна.
+A working toolkit for the LicheeRV Nano (SG2002 / CV181x) with the GC4653
+camera: MJPEG streaming, YOLO detection on the NPU, face recognition, and a
+desktop tool for capturing datasets, labeling and building models. The
+repository contains four independent projects.
 
-| Проект | Что это | Быстрый старт |
+Ready-to-run release packages include the board binaries, models and matching
+runtime libraries, plus desktop builds of Lichee YOLO Studio for Linux and
+Windows. Cross-compilation is not needed to run anything on the board.
+
+| Project | What it is | Quick start |
 |---|---|---|
-| [`yolo_stream/`](yolo_stream/README.md) | MJPEG 960×540 + YOLOv8/YOLO11 на NPU, 7 моделей, порт 7777 | `yolo_stream/install.sh <IP>` → `start_stream.sh auto` |
-| [`yolo_face/`](yolo_face/README.md) | MJPEG + детекция/распознавание лиц (SCRFD + cviface) | `yolo_face/install.sh <IP>` → `start_face.sh start` |
-| [`yolo_studio/`](yolo_studio/README.md) | Настольная утилита: съёмка датасета, разметка, обучение, экспорт `.cvimodel` | `pip install -r yolo_studio/requirements.txt` → `python yolo_studio/app.py` |
-| [`tpu-fix/`](tpu-fix/README.md) | Патчер таймаута TPU (`soph_tpu.ko`) без распространения `.ko` | `tpu-fix/patch_tpu.sh` на плате |
+| [`yolo_stream/`](yolo_stream/README.md) | MJPEG 960×540 + YOLOv8/YOLO11 on the NPU, 7 models, port 7777 | `yolo_stream/install.sh <IP>` → `start_stream.sh auto` |
+| [`yolo_face/`](yolo_face/README.md) | MJPEG + face detection/recognition (SCRFD + cviface) | `yolo_face/install.sh <IP>` → `start_face.sh start` |
+| [`yolo_studio/`](yolo_studio/README.md) | Desktop tool: dataset import/capture, labeling, training, `.cvimodel` export | download the Linux/Windows build from Releases |
+| [`tpu-fix/`](tpu-fix/README.md) | TPU timeout patcher (`soph_tpu.ko`) without redistributing the `.ko` | `tpu-fix/patch_tpu.sh` on the board |
 
-`yolo_stream` и `yolo_face` используют одну камеру и порт 7777, поэтому
-взаимно останавливают друг друга. Автозапуск не устанавливается: после
-загрузки режим выбирается вручную.
+`yolo_stream` and `yolo_face` share the camera and port 7777, so starting one
+stops the other. No autostart is installed: after boot you choose the mode
+manually.
 
-## Установка на плату
+## Ready-to-run releases
 
-Адрес платы не фиксирован (USB/RNDIS, Wi-Fi и Ethernet дают разные адреса).
-Установщики спрашивают IP, копируют пакет в `/root/yolo_stream` или
-`/root/yolo_face`, проверяют контрольные суммы и не трогают камеру:
+Download the latest files from
+[GitHub Releases](https://github.com/mclovin4k/lichee-rv-nano-YOLO/releases/latest):
+
+| Asset | Contents |
+|---|---|
+| `yolo_stream-board.tar.gz` | `stream_yolo`, models, start scripts, vendor libraries, musl loader and libc |
+| `yolo_face-board.tar.gz` | `face_stream`, face models, start scripts, vendor libraries, musl loader and libc |
+| `yolo_studio-linux-x86_64.tar.gz` | one-file Lichee YOLO Studio executable for Linux x86_64 |
+| `LicheeYOLOStudio.exe` | one-file Lichee YOLO Studio executable for Windows x86_64 |
+| `*.sha256`, `SHA256SUMS.txt` | checksums for every asset |
+
+The board installers download the latest release themselves, verify its
+SHA256, unpack it over SSH and check the package checksums on the board:
 
 ```sh
-cd yolo_stream && ./install.sh              # спросит IP
-# или
-BOARD_IP=<IP> ./install.sh
+git clone https://github.com/mclovin4k/lichee-rv-nano-YOLO.git
+cd lichee-rv-nano-YOLO
+
+cd yolo_stream
+./install.sh <IP>              # or: BOARD_IP=<IP> ./install.sh
+
+cd ../yolo_face
+./install.sh <IP>
 ```
 
-Камера настраивается штатным образом по `/mnt/data/sensor_cfg.ini`
-(I2C-адрес матрицы и `lane_id` MIPI-пар). Скрипты не меняют pinmux и не
-пишут в `/dev/mem`.
+Useful installer options:
 
-- Поток: `http://<IP>:7777/` (VLC/ffplay)
-- Лог потока: `/root/yolo_stream/log/stream.log`
-- Лог лиц: `/root/yolo_face/log/face.log`
+```sh
+RELEASE=v1.0.0 ./install.sh <IP>              # pin a release
+PAYLOAD_DIR=/path/to/unpacked-package ./install.sh <IP>
+TPU_PATCH=1 ./install.sh <IP>                 # also apply the TPU timeout fix
+```
 
-## Сборка
+The board package is self-contained: `run_stream.sh` / `run_face.sh` set
+`LD_LIBRARY_PATH` and use the bundled musl loader by default, so the matching
+libc, `libgcc`, `libatomic` and vendor libraries are always found.
 
-Каждый проект собирается своими скриптами; общие зависимости (RISC-V musl
-toolchain, SDK, OpenCV) скачиваются в локальный `.deps/`:
+### Lichee YOLO Studio
+
+- **Linux:** unpack
+  `yolo_studio-linux-x86_64.tar.gz`, then run
+  `./LicheeYOLOStudio`. The archive is built on Ubuntu 22.04 and needs glibc
+  2.35 or newer (Ubuntu 22.04+, Debian 12+, Fedora 36+, and similar).
+- **Windows:** run `LicheeYOLOStudio.exe`. There is no installer; if
+  SmartScreen appears, choose **More info → Run anyway**.
+
+The Qt X11 library `libxcb-cursor.so.0` is bundled in the Linux release. If a
+minimal system still reports a missing xcb plugin, install the distribution
+package (`sudo apt install libxcb-cursor0`, `sudo dnf install
+xcb-util-cursor`, or `sudo pacman -S xcb-util-cursor`); see
+[`yolo_studio/README.md`](yolo_studio/README.md) for details.
+
+## Installing on the board
+
+The board address is not fixed (USB/RNDIS, Wi-Fi and Ethernet use different
+addresses). The installers ask for the IP, stop an old stream/face process,
+copy the package to `/root/yolo_stream` or `/root/yolo_face`, verify checksums,
+and leave the camera configuration alone:
+
+```sh
+cd yolo_stream && ./install.sh              # asks for the IP
+# or
+BOARD_IP=192.0.2.100 ./install.sh
+```
+
+The camera is configured by the stock image through `/mnt/data/sensor_cfg.ini`
+(sensor I2C address and MIPI `lane_id`). The scripts do not change pinmux and
+do not write to `/dev/mem`.
+
+- Stream: `http://<IP>:7777/` (VLC/ffplay)
+- Stream log: `/root/yolo_stream/log/stream.log`
+- Face log: `/root/yolo_face/log/face.log`
+
+Nothing is started automatically. Use `start_stream.sh` or
+`start_face.sh start` after installation.
+
+## Building
+
+Each board project is built with its own scripts; shared dependencies (RISC-V
+musl toolchain, SDK, OpenCV) are downloaded into a local `.deps/`:
 
 ```sh
 cd yolo_stream
@@ -49,48 +110,73 @@ cd yolo_stream
 ./scripts/build.sh
 ```
 
-Аналогично для `yolo_face`. `scripts/fetch-deps.sh` по умолчанию скачивает
+The same applies to `yolo_face`. By default, `scripts/fetch-deps.sh`
+downloads
 [musl-cross 20261001](https://github.com/musl-cross/musl-cross/releases/tag/20261001)
-(`riscv64-unknown-linux-musl`, SHA256 зафиксирован); поддерживаются также
-`musl.cc` `riscv64-linux-musl-cross` (GCC 11.2.1) и Sipeed/Sophgo. SDK —
+(`riscv64-unknown-linux-musl`, SHA256 pinned); `musl.cc`
+`riscv64-linux-musl-cross` (GCC 11.2.1) and Sipeed/Sophgo toolchains are also
+supported. SDK —
 [milkv-duo/cvitek-tdl-sdk-sg200x](https://github.com/milkv-duo/cvitek-tdl-sdk-sg200x),
-OpenCV — официальный [opencv-mobile v36](https://github.com/nihui/opencv-mobile/releases/tag/v36)
-(4.13.0, Apache-2.0) с патчем CVI-бэкенда. Точные версии и коммиты
-зафиксированы в `scripts/fetch-deps.sh`.
+OpenCV — the official [opencv-mobile v36](https://github.com/nihui/opencv-mobile/releases/tag/v36)
+(4.13.0, Apache-2.0) with the CVI backend patch. Exact versions and commits
+are pinned in `scripts/fetch-deps.sh`.
 
-### Сборка на GitHub
+To build a complete, self-contained board package locally (binary + models +
+vendor libraries + matching musl loader/libc):
 
-Репозиторий уже содержит workflow `.github/workflows/build.yml`. Он собирает
-`stream_yolo` и `face_stream` на Ubuntu runner при каждом push, а также
-запускается вручную:
+```sh
+scripts/package-board.sh yolo_stream yolo_stream/build/bin/stream_yolo \
+    yolo_stream/.deps/riscv64-linux-musl-cross out
+```
 
-1. открой вкладку **Actions** → **build**;
-2. нажми **Run workflow** → **Run workflow**;
-3. после завершения скачай артефакты `yolo_stream-bin` и `yolo_face-bin`
-   (внутри — готовые бинарники `build/bin/*`).
+The result is `out/yolo_stream-board.tar.gz` and its `.sha256` file. The same
+script accepts `yolo_face` and `yolo_face/build/bin/face_stream`.
 
-Кросс-компиляция и OpenCV выполняются на GitHub, локальный toolchain не
-нужен. Артефакты Actions хранятся ограниченное время; для долгосрочной
-публикации прикрепи бинарники к GitHub Release.
+### Building on GitHub
 
-## Что важно знать
+The repository includes `.github/workflows/build.yml`. On every push it builds
+`stream_yolo`, `face_stream`, and the Linux/Windows Studio executables, then
+uploads them as artifacts. A tag such as `v1.0.0` additionally publishes a
+GitHub Release with all four ready-to-run packages and checksums.
 
-- **Датасеты и кадры пользователя в репозиторий не входят.** Модели — только
-  готовые `.cvimodel`; изображения, видео и разметка остаются локально.
-- **TPU-фикс — патчер, а не GPL-бинарник.** `tpu-fix/patch_tpu.sh` правит
-  таймаут в установленном на плате модуле, делает резервную копию и умеет
-  откатываться. Исходников драйвера и `.ko` в репозитории нет.
-- **Лицензии сторонних моделей и библиотек** — в
-  [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md), тексты — в `LICENSES/`.
-  Часть вендорных библиотек Cvitek/Sophgo идёт без явной лицензии; модели
-  YOLO — производные Ultralytics (AGPL-3.0). Перед коммерческим
-  использованием прочитайте notices.
-- **Автозапуск не ставится.** Плата после загрузки свободна; поток или лица
-  запускаются вручную.
+1. open the **Actions** tab → **build**;
+2. click **Run workflow** → **Run workflow**;
+3. download the `yolo_stream-board`, `yolo_face-board`,
+   `yolo_studio-linux`, or `yolo_studio-windows` artifact.
 
-## Лицензия
+Cross-compilation, OpenCV, PyInstaller and smoke tests run on GitHub; no local
+toolchain is needed. To publish a release, push a version tag:
 
-Оригинальный код репозитория распространяется по MIT — см. [`LICENSE`](LICENSE).
-Сторонние библиотеки, runtime и модели остаются под своими лицензиями; их
-условия и источники перечислены в [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md)
-и `LICENSES/`. MIT не заменяет лицензии сторонних компонентов.
+```sh
+git tag v1.0.0
+git push origin v1.0.0
+```
+
+## Things to know
+
+- **Custom datasets are supported.** Lichee YOLO Studio can import arbitrary
+  images (JPEG/PNG/BMP), optionally resize them, and pick up YOLO labels,
+  `data.yaml`, or `classes.txt` if present. See the
+  [Studio guide](yolo_studio/README.md#importing-an-existing-dataset).
+- **User datasets and frames are not part of the repository.** Only
+  ready-made `.cvimodel` files are included; images, videos and labels stay
+  local.
+- **The TPU fix is a patcher, not a GPL binary.** `tpu-fix/patch_tpu.sh`
+  changes the timeout in the module already installed on the board, creates a
+  backup and can roll back. Neither driver sources nor a `.ko` are included in
+  the repository.
+- **Third-party model and library licenses** are described in
+  [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md), with full texts in
+  `LICENSES/`. Some vendor libraries from Cvitek/Sophgo ship without an
+  explicit license; the YOLO models are derivatives of Ultralytics
+  (AGPL-3.0). Read the notices before commercial use.
+- **No autostart is installed.** The board is free after boot; the stream or
+  face mode is started manually.
+
+## License
+
+The original code in this repository is distributed under the MIT license —
+see [`LICENSE`](LICENSE). Third-party libraries, runtimes and models remain
+under their own licenses; their terms and sources are listed in
+[`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) and `LICENSES/`. The MIT
+license does not replace the licenses of third-party components.

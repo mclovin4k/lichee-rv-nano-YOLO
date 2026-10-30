@@ -137,8 +137,8 @@ public:
 
     void stop() {
         this->release();
-        /* Рвём клиентские соединения: зависшая отправка кадра иначе не даст
-           завершиться потоку writer. */
+        /* Break client connections: a stuck frame send would otherwise prevent
+           the writer thread from finishing. */
         pthread_mutex_lock(&mutex_client);
         for (size_t i = 0; i < clients.size(); i++) {
             ::shutdown(clients[i], 2);
@@ -146,9 +146,9 @@ public:
         }
         clients.clear();
         pthread_mutex_unlock(&mutex_client);
-        /* Потоки не дожидаемся: клиент, который перестал читать, может
-           держать send() до таймаута, а приложению нужно освободить VB-пулы
-           и завершиться. Потоки умрут вместе с процессом. */
+        /* Do not wait for the threads: a client that stopped reading may hold
+           send() until the timeout, while the application needs to release VB
+           pools and exit. The threads will die with the process. */
         pthread_detach(thread_listen);
         pthread_detach(thread_write);
     }

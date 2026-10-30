@@ -1,64 +1,78 @@
-# face_stream — MJPEG + распознавание лиц на NPU (LicheeRV Nano, SG2002/CV181x)
+# face_stream — MJPEG + NPU face recognition (LicheeRV Nano, SG2002/CV181x)
 
-Готовое приложение для LicheeRV Nano с камерой GC4653: MJPEG 960×540 на
-порту 7777, детекция лиц SCRFD, распознавание по галерее (cviface) и
-пассивная проверка живости по морганию. В комплекте — собранный бинарь,
-runtime-библиотеки, загрузчик и скрипты запуска, поэтому кросс-компиляция для
-запуска не нужна.
+A ready-to-run application for the LicheeRV Nano with the GC4653 camera:
+960×540 MJPEG on port 7777, SCRFD face detection, gallery-based recognition
+(cviface) and passive blink-based liveness checking. The release package
+includes the binary, runtime libraries, matching musl loader/libc and start
+scripts, so no cross-compilation is needed to run it.
 
-## Состав
+## Contents
 
-| Что | Где |
+| Item | Location |
 |---|---|
-| Исходники | `src/` |
-| Готовый бинарь и runtime | `dist/board/face_stream`, `dist/board/runtime/` |
-| Модели TDL | `dist/board/models/face/` |
-| Запуск/остановка | `dist/board/start_face.sh`, `dist/board/run_face.sh` |
-| Установщик по SSH | `install.sh` |
-| Сборка | `CMakeLists.txt`, `cmake/`, `scripts/`, `patches/` |
-| Контрольные суммы | `dist/md5sums.txt` |
+| Sources | `src/` |
+| Ready-to-run package | `yolo_face-board.tar.gz` from Releases (binary, runtime, models, scripts) |
+| Runtime skeleton | `dist/board/runtime/` (vendor libraries and musl loader) |
+| TDL models | `dist/board/models/face/` |
+| Start/stop scripts | `dist/board/start_face.sh`, `dist/board/run_face.sh` |
+| SSH installer | `install.sh` (downloads the latest release by default) |
+| Build | `CMakeLists.txt`, `cmake/`, `scripts/`, `patches/`, `../scripts/package-board.sh` |
 
-`libcvi_tdl.so` грузится через `dlopen`: она собрана с shared OpenCV 3.2, а
-приложение — со статическим OpenCV 4.13 (CVI-бэкенд камеры). Прямая линковка
-смешивает две реализации OpenCV и падает. Поэтому в runtime рядом лежат
-`libcvi_tdl.so`, `libcnpy.so`, `libcvi_ive.so` и shared OpenCV 3.2.
+`libcvi_tdl.so` is loaded via `dlopen`: it is built against shared OpenCV 3.2,
+while the application uses static OpenCV 4.13 (with the CVI camera backend).
+Linking them directly mixes two OpenCV implementations and crashes. That is
+why `libcvi_tdl.so`, `libcnpy.so`, `libcvi_ive.so` and shared OpenCV 3.2 are
+placed together in the runtime.
 
-Патченная middleware-сборка `libvpu_tdl.so` нужна только TDL (GDC-символы).
-VPSS/VI работают с системной `libvpu.so` из `/mnt/system/usr/lib` — она
-согласована с драйвером прошивки. Обе библиотеки одновременно видны в
-`/proc/PID/maps`; это нормально.
+The patched middleware build `libvpu_tdl.so` is needed only by TDL (for GDC
+symbols). VPSS/VI use the system `libvpu.so` from `/mnt/system/usr/lib`, which
+matches the firmware driver. Both libraries are visible in `/proc/PID/maps` at
+the same time; this is expected.
 
-## Установка на плату
+## Installing on the board
 
 ```sh
 chmod +x install.sh
-./install.sh                 # спросит IP платы
+./install.sh                 # downloads the latest release, asks for the IP
 BOARD_IP=<IP> ./install.sh
-TPU_PATCH=1 ./install.sh <IP>   # ещё и фикс таймаута TPU
+RELEASE=v1.0.0 ./install.sh <IP>
+PAYLOAD_DIR=/path/to/package ./install.sh <IP>
+TPU_PATCH=1 ./install.sh <IP>   # also apply the TPU timeout fix
 ```
 
-Адрес платы не фиксирован: в разных сетях (USB/RNDIS, Wi-Fi, Ethernet) он
-свой. Установщик:
+The board address is not fixed: it differs between networks (USB/RNDIS,
+Wi-Fi, Ethernet). By default the installer:
 
-1. проверяет SSH;
-2. останавливает старые `face_stream`/`stream_yolo`;
-3. копирует пакет в `/root/yolo_face`, сохраняя `/root/faces` (галерею);
-4. сверяет md5;
-5. по желанию применяет `../tpu-fix/patch_tpu.sh`;
-6. **не** добавляет автозапуск.
+1. downloads `yolo_face-board.tar.gz` from the latest GitHub Release;
+2. verifies its SHA256;
+3. checks SSH and stops old `face_stream`/`stream_yolo` processes;
+4. copies the package to `/root/yolo_face`, preserving `/root/faces` (the
+   gallery);
+5. verifies the package md5 list on the board;
+6. optionally applies `../tpu-fix/patch_tpu.sh`;
+7. does **not** add an autostart entry.
 
-Камера настраивается штатным образом по `/mnt/data/sensor_cfg.ini` (I2C-адрес
-матрицы и `lane_id` MIPI-пар). Скрипты не трогают pinmux и `/dev/mem`; если
-файла нет, установщик предупредит.
+The package already contains the binary, face models, vendor libraries and a
+matching musl loader/libc. Use `PAYLOAD_DIR` to install a locally built
+package instead of downloading one.
 
-### Ручная установка
+The camera is configured by the stock image through `/mnt/data/sensor_cfg.ini`
+(sensor I2C address and MIPI `lane_id`). The scripts do not touch pinmux or
+`/dev/mem`; if the file is missing, the installer warns about it.
+
+### Manual installation
 
 ```sh
-tar -C dist/board -cf - . | ssh root@<IP> 'rm -rf /root/yolo_face; mkdir -p /root/yolo_face; tar -xf - -C /root/yolo_face'
+curl -fLO https://github.com/mclovin4k/lichee-rv-nano-YOLO/releases/latest/download/yolo_face-board.tar.gz
+curl -fLO https://github.com/mclovin4k/lichee-rv-nano-YOLO/releases/latest/download/yolo_face-board.tar.gz.sha256
+sha256sum -c yolo_face-board.tar.gz.sha256
+tar -xzf yolo_face-board.tar.gz -C /tmp/yolo_face-package
+tar -C /tmp/yolo_face-package -cf - . | \
+    ssh root@<IP> 'rm -rf /root/yolo_face; mkdir -p /root/yolo_face; tar -xf - -C /root/yolo_face'
 ssh root@<IP> 'chmod +x /root/yolo_face/face_stream /root/yolo_face/*.sh'
 ```
 
-## Запуск
+## Running
 
 ```sh
 ssh root@<IP> '/root/yolo_face/start_face.sh start'
@@ -66,78 +80,87 @@ ssh root@<IP> '/root/yolo_face/start_face.sh status'
 ssh root@<IP> '/root/yolo_face/start_face.sh stop'
 ```
 
-`start_face.sh start` сам останавливает `stream_yolo`: у них общая камера и
-порт 7777. Обратно: `yolo_stream/start_stream.sh` останавливает
-`face_stream`. Автозапуска нет — режим выбирается вручную после загрузки.
+`start_face.sh start` stops `stream_yolo` by itself: they share the camera and
+port 7777. The reverse is also true: `yolo_stream/start_stream.sh` stops
+`face_stream`. There is no autostart — the mode is chosen manually after boot.
 
-- Веб-морда: `http://<IP>:7777/` — видео, список людей, поле имени, «Запомнить».
+- Web UI: `http://<IP>:7777/` — video, list of people, name field, "Remember".
 - MJPEG: `http://<IP>:7777/stream`
-- Лог: `/root/yolo_face/log/face.log`
-- Галерея: `/root/faces/<имя>/feature.bin` (+ `meta.json`, `preview.jpg`)
+- Log: `/root/yolo_face/log/face.log`
+- Gallery: `/root/faces/<name>/feature.bin` (plus `meta.json`,
+  `preview.jpg`)
 
-Супервизор перезапускает приложение, если сторожевой таймер вернул код 2
-(зависание TPU). Обычный выход по SIGINT не перезапускается.
+The supervisor restarts the application if the watchdog returns code 2 (TPU
+hang). A normal exit via SIGINT is not restarted.
 
-### Загрузчик
+### Loader and libraries
 
-По умолчанию бинарь запускается напрямую и использует системный
-`/lib/ld-musl-riscv64.so.1`. Если в образе нет системного загрузчика или он
-несовместим, `run_face.sh` берёт `runtime/ld-musl-riscv64.so.1`:
+The release package is self-contained: `run_face.sh` sets `LD_LIBRARY_PATH`
+to `runtime/` and starts the binary through `runtime/ld-musl-riscv64.so.1` by
+default. The bundled loader and libc come from the same toolchain as the
+binary, so no system musl version is required.
 
 ```sh
-SY_BUNDLED_LOADER=1 /root/yolo_face/start_face.sh start
+# default: bundled loader + bundled libraries
+/root/yolo_face/start_face.sh start
+
+# opt out and use the system /lib/ld-musl-riscv64.so.1
+SY_BUNDLED_LOADER=0 /root/yolo_face/start_face.sh start
 ```
 
-При явном запуске через загрузчик `comm` процесса становится
-`ld-musl-riscv64`, поэтому `start_face.sh` хранит pid в
-`/tmp/yolo_face.app.pid`, а не ищет процесс через `pidof`.
+When the binary is started explicitly through the loader, the process `comm`
+becomes `ld-musl-riscv64`, so `start_face.sh` stores the pid in
+`/tmp/yolo_face.app.pid` instead of looking the process up via `pidof`.
 
-## Как это работает
+## How it works
 
-1. OpenCV с CVI-бэкендом отдаёт NV21-кадр 960×540 из VPSS (без копирования
-   через `cv::Mat`).
-2. Отдельный канал VPSS отдаёт RGB_888 для TDL: SCRFD находит лица,
-   cviface считает эмбеддинг, галерея сравнивает по косинусу.
-3. Инференс идёт в отдельном потоке: зависший TPU не останавливает видео.
-4. Кадр с рамками уходит в аппаратный VENC (JPEG), затем в MJPEG-сервер.
-5. «Запомнить» собирает 12 кадров крупнейшего лица, усредняет
-   нормализованный вектор и кладёт его в `/root/faces/<имя>/`.
+1. OpenCV with the CVI backend delivers a 960×540 NV21 frame from VPSS
+   (without copying through `cv::Mat`).
+2. A separate VPSS channel delivers RGB_888 for TDL: SCRFD finds faces,
+   cviface computes an embedding, and the gallery compares them by cosine
+   similarity.
+3. Inference runs in a separate thread: a stuck TPU does not stop the video.
+4. The frame with boxes goes to the hardware VENC (JPEG), then to the MJPEG
+   server.
+5. "Remember" collects 12 frames of the largest face, averages the normalized
+   vector, and stores it in `/root/faces/<name>/`.
 
-Цвета рамок: жёлтая `имя?` — совпадение есть, живость ещё не подтверждена;
-зелёная `имя` — подтверждена морганием; красная `photo?` — лицо не моргает;
-жёлтая `Unknown` — лица нет в галерее.
+Box colors: yellow `name?` — a match exists, but liveness has not been
+confirmed yet; green `name` — confirmed by blinking; red `photo?` — the face
+does not blink; yellow `Unknown` — the face is not in the gallery.
 
-Liveness-модель TDL (`cls_rgbliveness_256_256`) на этой прошивке роняет
-драйвер TPU, поэтому по умолчанию выключена (`SY_LIVE=0`). Защита от
-фотографии — пассивная проверка моргания: человеку ничего делать не нужно,
-фотография не моргает. Подтверждение живёт 15 с и протухает без новых
-морганий.
+The TDL liveness model (`cls_rgbliveness_256_256`) crashes the TPU driver on
+this firmware, so it is disabled by default (`SY_LIVE=0`). Photo protection is
+provided by passive blink detection: the person does not need to do anything,
+and a photograph does not blink. The confirmation lives for 15 s and expires
+without new blinks.
 
-## Сборка
+## Building
 
-Нужны:
+You need:
 
-- RISC-V musl toolchain. `scripts/fetch-deps.sh` по умолчанию скачивает
+- RISC-V musl toolchain. By default, `scripts/fetch-deps.sh` downloads
   [musl-cross 20261001](https://github.com/musl-cross/musl-cross/releases/tag/20261001)
-  (`riscv64-unknown-linux-musl`, SHA256 зафиксирован); поддерживаются также
-  [musl.cc](https://musl.cc/) `riscv64-linux-musl-cross` (GCC 11.2.1) и
-  Sipeed/Sophgo с префиксом `riscv64-unknown-linux-musl-`.
+  (`riscv64-unknown-linux-musl`, SHA256 pinned); [musl.cc](https://musl.cc/)
+  `riscv64-linux-musl-cross` (GCC 11.2.1) and Sipeed/Sophgo with the
+  `riscv64-unknown-linux-musl-` prefix are also supported.
 - SDK [milkv-duo/cvitek-tdl-sdk-sg200x](https://github.com/milkv-duo/cvitek-tdl-sdk-sg200x)
-  (заголовки middleware v2 и `cvi_tdl`, `libvenc.so`, `libsys.so`),
-  зафиксирован коммит в `scripts/fetch-deps.sh`.
-- OpenCV: официальный релиз
+  (middleware v2 and `cvi_tdl` headers, `libvenc.so`, `libsys.so`), the commit
+  is pinned in `scripts/fetch-deps.sh`.
+- OpenCV: the official release
   [nihui/opencv-mobile v36, opencv-mobile-4.13.0.zip](https://github.com/nihui/opencv-mobile/releases/tag/v36)
-  (Apache-2.0) + патч `patches/opencv-mobile-4.13.0-cvi-capture.patch`.
-- `libcviruntime`/`libcvikernel` заголовки и библиотеки — `third_party/cviruntime`.
+  (Apache-2.0) plus `patches/opencv-mobile-4.13.0-cvi-capture.patch`.
+- `libcviruntime`/`libcvikernel` headers and libraries —
+  `third_party/cviruntime`.
 
 ```sh
 cd yolo_face
-./scripts/fetch-deps.sh       # тулчейн, SDK, исходники OpenCV + патч
-./scripts/build-opencv.sh     # сборка/установка OpenCV в .deps/opencv-install
+./scripts/fetch-deps.sh       # toolchain, SDK, OpenCV sources + patch
+./scripts/build-opencv.sh     # build/install OpenCV into .deps/opencv-install
 ./scripts/build.sh            # build/bin/face_stream
 ```
 
-Или указать готовые пути:
+Or point the build at pre-installed paths:
 
 ```sh
 TOOLCHAIN_PATH=/path/to/riscv64-linux-musl-cross \
@@ -146,59 +169,69 @@ OpenCV_DIR=/path/to/opencv/lib/cmake/opencv4 \
 ./scripts/build.sh
 ```
 
-`TOOLCHAIN_PATH` читается и из окружения, и через `-DTOOLCHAIN_PATH`; для
-`try_compile` надёжнее экспортировать его. `scripts/fetch-deps.sh` качает
-только нужные файлы SDK (sparse checkout), без примеров и бинарей.
+`TOOLCHAIN_PATH` is read both from the environment and via
+`-DTOOLCHAIN_PATH`; exporting it is more reliable for `try_compile`.
+`scripts/fetch-deps.sh` downloads only the required SDK files (sparse
+checkout), without examples and binaries.
 
-Ту же сборку можно запустить на GitHub: вкладка **Actions** → **build** →
-**Run workflow**. Готовый `face_stream` будет в артефакте `yolo_face-bin`.
+The same build can be run on GitHub: **Actions** tab → **build** →
+**Run workflow**. The run produces `yolo_face-bin` (the bare binary) and
+`yolo_face-board` (a complete self-contained tarball) artifacts. Pushing a
+`v*` tag publishes both release assets automatically.
 
-## Модели и лицензии
+To create the complete package locally after a build:
 
-Модели `scrfd_det_face_432_768`, `feature_cviface_112_112`,
-`cls_rgbliveness_256_256` взяты из примеров TDL SDK. Файла лицензии у
-`milkv-duo/cvitek-tdl-sdk-sg200x` нет; распространяются как есть, без
-гарантий. `libcvi_tdl.so`, `libcnpy.so`, `libcvi_ive.so`, `libcviruntime.so`,
-`libcvikernel.so`, `libcvimath.so` и `libvpu_tdl.so` — вендорные бинарники
-Cvitek/Sophgo без явной лицензии в источнике. Подробности и ссылки —
-в `../THIRD_PARTY_NOTICES.md`; это не «лицензированный» код, а готовая
-поставка для платы.
+```sh
+../scripts/package-board.sh yolo_face build/bin/face_stream \
+    .deps/riscv64-linux-musl-cross ../out
+```
 
-OpenCV 4.13 (static, для приложения) распространяется по Apache-2.0,
-OpenCV 3.2 (shared, для TDL) — по BSD-3-Clause. Патч камеры применяется к
-официальному релизу `nihui/opencv-mobile` v36.
+## Models and licenses
 
-## Ручки окружения
+The `scrfd_det_face_432_768`, `feature_cviface_112_112` and
+`cls_rgbliveness_256_256` models come from the TDL SDK examples. There is no
+license file for `milkv-duo/cvitek-tdl-sdk-sg200x`; they are distributed as
+is, without warranty. `libcvi_tdl.so`, `libcnpy.so`, `libcvi_ive.so`,
+`libcviruntime.so`, `libcvikernel.so`, `libcvimath.so` and `libvpu_tdl.so` are
+vendor binaries from Cvitek/Sophgo without an explicit license in the source.
+Details and links are in `../THIRD_PARTY_NOTICES.md`; this is not "licensed"
+code, but a ready-to-run package for the board.
 
-| Переменная | По умолчанию | Смысл |
+OpenCV 4.13 (static, for the application) is distributed under Apache-2.0;
+OpenCV 3.2 (shared, for TDL) under BSD-3-Clause. The camera patch is applied
+to the official `nihui/opencv-mobile` v36 release.
+
+## Environment variables
+
+| Variable | Default | Meaning |
 |---|---|---|
-| `SY_DET_THR` | 0.40 | порог детекции SCRFD |
-| `SY_FACE_THR` | 0.40 | порог сходства с галереей |
-| `SY_FACE_PERIOD_MS` | 70 | пауза между инференсами |
-| `SY_MAX_BOXES` | 8 | больше рамок — сбой детекции, кадр пропускается |
-| `SY_PUB_BOXES` | 5 | сколько лиц показывать |
-| `SY_PUB_SCORE` | 0.55 | минимальный score для показа |
-| `SY_PUB_MIN` | 48 | минимальная сторона рамки, px |
-| `SY_LIVE` | 0 | 1 — включить liveness-модель (не рекомендуется) |
-| `SY_LIVE_BLINKS` | 1 | сколько морганий подтверждают живость |
-| `SY_LIVE_CHECK_MS` | 12000 | сколько ждать моргания |
-| `SY_LIVE_KEEP_MS` | 15000 | сколько живёт подтверждение |
-| `SY_ROTATE` | 0 | поворот кадра для детектора: 0/90/180/270 |
-| `SY_FACES_DIR` | `/root/faces` | каталог галереи |
-| `SY_TDL_LIB` | `runtime/libcvi_tdl.so` | библиотека TDL |
-| `SY_VPU_LIB` | `runtime/libvpu_tdl.so` | libvpu для TDL |
-| `SY_BUNDLED_LOADER` | 0 | 1 — запуск через встроенный musl loader |
-| `WIDTH`, `HEIGHT` | 960, 540 | размер кадра |
+| `SY_DET_THR` | 0.40 | SCRFD detection threshold |
+| `SY_FACE_THR` | 0.40 | gallery similarity threshold |
+| `SY_FACE_PERIOD_MS` | 70 | pause between inferences |
+| `SY_MAX_BOXES` | 8 | more boxes means a detection failure; the frame is skipped |
+| `SY_PUB_BOXES` | 5 | how many faces to display |
+| `SY_PUB_SCORE` | 0.55 | minimum score to display |
+| `SY_PUB_MIN` | 48 | minimum box side, px |
+| `SY_LIVE` | 0 | 1 — enable the liveness model (not recommended) |
+| `SY_LIVE_BLINKS` | 1 | how many blinks confirm liveness |
+| `SY_LIVE_CHECK_MS` | 12000 | how long to wait for a blink |
+| `SY_LIVE_KEEP_MS` | 15000 | how long the confirmation lives |
+| `SY_ROTATE` | 0 | frame rotation for the detector: 0/90/180/270 |
+| `SY_FACES_DIR` | `/root/faces` | gallery directory |
+| `SY_TDL_LIB` | `runtime/libcvi_tdl.so` | TDL library |
+| `SY_VPU_LIB` | `runtime/libvpu_tdl.so` | libvpu for TDL |
+| `SY_BUNDLED_LOADER` | 1 | 0 — use the system musl loader instead of `runtime/` |
+| `WIDTH`, `HEIGHT` | 960, 540 | frame size |
 
-## Ограничения
+## Limitations
 
-- TDL принимает кадр 960×540; поворот 90/270 даёт 540×960 и
-  `ILLEGAL_PARAM`. Для повёрнутого корпуса используйте `SY_ROTATE` только
-  если TDL это принимает; по умолчанию 0.
-- Liveness-модель отключена (см. выше).
-- Зависание TPU (`wait dmabuf failed[-110]`, `run cmdbuf failed:2`) —
-  платформенный дефект драйвера. С фиксом из `../tpu-fix/` ожидание
-  сокращается с ~60 с до ~1 с; приложение пересоздаёт handle TDL.
-- Закрытие камеры иногда зависает в драйвере (`vb_qbuf`, состояние `D`);
-  если процесс не убивается — нужен `reboot`.
-- MJPEG q75 при 30 fps — около 9 Мбит/с.
+- TDL accepts a 960×540 frame; rotating by 90/270 gives 540×960 and
+  `ILLEGAL_PARAM`. For a rotated enclosure, use `SY_ROTATE` only if TDL
+  accepts it; the default is 0.
+- The liveness model is disabled (see above).
+- TPU hangs (`wait dmabuf failed[-110]`, `run cmdbuf failed:2`) are a platform
+  driver defect. With the fix from `../tpu-fix/`, the wait is reduced from
+  ~60 s to ~1 s; the application recreates the TDL handle.
+- Closing the camera sometimes hangs in the driver (`vb_qbuf`, state `D`); if
+  the process cannot be killed, a `reboot` is required.
+- MJPEG q75 at 30 fps is about 9 Mbit/s.

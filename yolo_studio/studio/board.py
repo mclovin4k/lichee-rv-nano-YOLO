@@ -1,4 +1,4 @@
-"""SSH/SFTP-операции с платой: режим съёмки, заливка модели."""
+"""SSH/SFTP operations on the board: capture mode, model upload."""
 
 from __future__ import annotations
 
@@ -32,7 +32,7 @@ class Board:
 
     def _connect(self) -> paramiko.SSHClient:
         if not self.ip:
-            raise BoardError("не задан IP платы")
+            raise BoardError("board IP is not set")
         client = paramiko.SSHClient()
         client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
         try:
@@ -56,7 +56,7 @@ class Board:
                 stderr = err.read().decode("utf-8", "replace")
                 rc = out.channel.recv_exit_status()
             except (socket.timeout, paramiko.SSHException, OSError) as exc:
-                raise BoardError(f"команда не выполнилась: {exc}") from exc
+                raise BoardError(f"command failed: {exc}") from exc
             return rc, stdout, stderr
         finally:
             client.close()
@@ -78,10 +78,10 @@ class Board:
             "error": err.strip(),
         }
 
-    # ---------- режимы потока ----------
+    # ---------- stream modes ----------
 
     def stop_all(self) -> str:
-        """Останавливает поток yolo (камера должна освободиться)."""
+        """Stops the YOLO stream (the camera must be released)."""
         cmd = (
             "for s in /root/yolo_stream/start_stream.sh /root/start_stream.sh; do "
             "[ -x \"$s\" ] && \"$s\" stop >/dev/null 2>&1; done; "
@@ -89,21 +89,21 @@ class Board:
         )
         rc, out, err = self.run(cmd, timeout=120)
         if rc != 0 and "not found" not in err:
-            raise BoardError(f"остановка потока: {err.strip() or rc}")
+            raise BoardError(f"stream stop failed: {err.strip() or rc}")
         return out.strip()
 
     @staticmethod
     def stream_cmd(args: str) -> str:
-        """Команда для start_stream.sh: новый путь, затем старый."""
+        """Command for start_stream.sh: new path first, then the old one."""
         paths = " ".join(STREAM_CTL_DIRS)
         return (
             f"S=; for p in {paths}; do [ -x \"$p\" ] && {{ S=$p; break; }}; done; "
-            "[ -n \"$S\" ] || { echo 'start_stream.sh не найден' >&2; exit 127; }; "
+            "[ -n \"$S\" ] || { echo 'start_stream.sh not found' >&2; exit 127; }; "
             f"\"$S\" {args}"
         )
 
     def start_clean(self, port: int | None = None) -> None:
-        """YOLO-поток без детекции и без рамок — чистые кадры для датасета."""
+        """YOLO stream without detection or boxes — clean frames for the dataset."""
         port = int(port or self.stream_port)
         cmd = (
             "mkdir -p /root/log && cd /root && "
@@ -112,11 +112,11 @@ class Board:
         ).format(port=port, script=shlex.quote(self.stream_cmd("auto")))
         rc, out, err = self.run(cmd, timeout=60)
         if rc != 0:
-            raise BoardError(f"чистый поток не запустился: {err.strip() or out.strip()}")
+            raise BoardError(f"clean stream failed to start: {err.strip() or out.strip()}")
         if not self.wait_http(port, timeout=30):
             tail = self.tail("/root/log/studio_capture.log", 12)
             raise BoardError(
-                f"поток на порту {port} не отвечает. Последние строки:\n{tail}")
+                f"stream on port {port} is not responding. Last lines:\n{tail}")
 
     def start_normal(self) -> None:
         cmd = ("mkdir -p /root/log && cd /root && sh -c {script} "
@@ -124,9 +124,9 @@ class Board:
                .format(script=shlex.quote(self.stream_cmd("auto"))))
         rc, out, err = self.run(cmd, timeout=60)
         if rc != 0:
-            raise BoardError(f"поток не запустился: {err.strip() or out.strip()}")
+            raise BoardError(f"stream failed to start: {err.strip() or out.strip()}")
         if not self.wait_http(self.stream_port, timeout=30):
-            raise BoardError("обычный поток не отвечает на " + str(self.stream_port))
+            raise BoardError("normal stream is not responding on " + str(self.stream_port))
 
     def wait_http(self, port: int | None = None, timeout: float = 30.0) -> bool:
         port = int(port or self.stream_port)
@@ -157,7 +157,7 @@ class Board:
         except BoardError:
             return ""
 
-    # ---------- модели ----------
+    # ---------- models ----------
 
     def list_models(self) -> list[str]:
         rc, out, _err = self.run(
@@ -176,7 +176,7 @@ class Board:
 
         local = Path(local_path)
         if not local.is_file():
-            raise BoardError(f"нет файла {local}")
+            raise BoardError(f"file not found: {local}")
         name = (remote_name or local.name).strip()
         if not name.endswith(".cvimodel"):
             name += ".cvimodel"
@@ -193,12 +193,12 @@ class Board:
                 if not overwrite:
                     try:
                         sftp.stat(remote)
-                        raise BoardError(f"на плате уже есть {name} (перезапись выключена)")
+                        raise BoardError(f"{name} already exists on the board (overwrite is disabled)")
                     except FileNotFoundError:
                         pass
                 sftp.put(str(local), remote)
                 sftp.chmod(remote, 0o644)
-                # Имена классов для подписи на стриме: <model>.names
+                # Class names for stream labels: <model>.names
                 local_names = local.with_suffix(".names")
                 if local_names.is_file():
                     remote_names = remote[:-len(".cvimodel")] + ".names"
@@ -207,11 +207,11 @@ class Board:
             finally:
                 sftp.close()
         except OSError as exc:
-            raise BoardError(f"заливка не удалась: {exc}") from exc
+            raise BoardError(f"upload failed: {exc}") from exc
         finally:
             client.close()
 
-        # в конец меню start_stream.sh (файл порядка)
+        # append to the start_stream.sh menu (order file)
         self.add_to_order(name)
         return remote
 
@@ -221,12 +221,12 @@ class Board:
                f"echo {q} >> /root/models/models.order")
         rc, _out, err = self.run(cmd, timeout=20)
         if rc != 0:
-            raise BoardError(f"не удалось обновить models.order: {err.strip()}")
+            raise BoardError(f"failed to update models.order: {err.strip()}")
 
     def restart_with_model(self, substring: str) -> str:
         cmd = ("cd /root && sh -c {script}"
                .format(script=shlex.quote(self.stream_cmd(shlex.quote(substring)))))
         rc, out, err = self.run(cmd, timeout=120)
         if rc != 0:
-            raise BoardError(f"запуск модели: {err.strip() or out.strip()}")
+            raise BoardError(f"model start failed: {err.strip() or out.strip()}")
         return out.strip()

@@ -9,7 +9,7 @@
 # Optional environment:
 #   SY_MODEL=<substring>   model for "auto" (default coco80)
 #   SY_HP="W H"            capture size (default "960 540")
-#   SY_BUNDLED_LOADER=1    run through runtime/ld-musl-riscv64.so.1
+#   SY_BUNDLED_LOADER=0    use the system musl loader instead of runtime/
 #   SY_KEEP_LOG=1          do not rotate the log on start
 #   plus the detection variables understood by stream_yolo (SY_DET_THR, ...)
 #
@@ -171,14 +171,14 @@ find_model() { # $1: substring (empty = first available)
 kind() {
     case "$1" in
     *coco80*) echo "COCO-80, 640x640" ;;
-    *person_vehicle*) echo "человек/транспорт (7), 640x384" ;;
-    *head_hardhat*) echo "голова/каска (2), 960x576" ;;
-    *traffic_light*) echo "светофор (5), 640x384" ;;
-    *license_plate*) echo "номер (1), 640x384" ;;
-    *fire_smoke*) echo "огонь/дым (2), 640x384" ;;
-    *drone*) echo "квадрокоптер (1), 640x640" ;;
-    *det*) echo "YOLO-det (классы и размер авто)" ;;
-    *) echo "не YOLO-det: бинарь откажется с сообщением" ;;
+    *person_vehicle*) echo "person/vehicle (7), 640x384" ;;
+    *head_hardhat*) echo "head/hardhat (2), 960x576" ;;
+    *traffic_light*) echo "traffic light (5), 640x384" ;;
+    *license_plate*) echo "license plate (1), 640x384" ;;
+    *fire_smoke*) echo "fire/smoke (2), 640x384" ;;
+    *drone*) echo "quadcopter (1), 640x640" ;;
+    *det*) echo "YOLO-det (classes and size auto)" ;;
+    *) echo "not YOLO-det: the binary will refuse with a message" ;;
     esac
 }
 

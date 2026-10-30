@@ -1,43 +1,45 @@
-# Фикс зависания TPU: `soph_tpu.ko`
+# TPU hang fix: `soph_tpu.ko`
 
-Патчер для штатного модуля ядра LicheeRV Nano (SG2002 / CV181x). Убирает
-минутные «залипания» TPU, из-за которых поток MJPEG продолжает идти, но рамки
-детектора замирают.
+A patcher for the stock LicheeRV Nano kernel module (SG2002 / CV181x). It
+removes the minute-long TPU stalls that keep the MJPEG stream running while
+the detector boxes freeze.
 
-В репозитории **нет** готового `.ko`: драйвер распространяется под GPL, а его
-исходников в образе нет. Патчер меняет только константы в том модуле, который
-уже лежит на вашей плате, и не требует публикации бинарника.
+The repository does **not** contain a ready-made `.ko`: the driver is
+distributed under the GPL, and its sources are not available in the image.
+The patcher only changes constants in the module already installed on your
+board and does not require publishing a binary.
 
-## Симптомы
+## Symptoms
 
-- в `dmesg` повторяется `cvi-tpu c100000.tpu: run dmabuf timeout`;
-- в логе `stream_yolo` — `wait dmabuf failed[-110]` (`-ETIMEDOUT`) и
+- `cvi-tpu c100000.tpu: run dmabuf timeout` repeats in `dmesg`;
+- the `stream_yolo` log shows `wait dmabuf failed[-110]` (`-ETIMEDOUT`) and
   `run cmdbuf failed:2`;
-- инференс вместо 50–80 мс занимает секунды, детектор отдаёт устаревшие рамки;
-- в кадре появляется `no det Ns`, хотя поток идёт;
-- `kill -9` не убивает процесс, застрявший в TPU-ioctl, до драйверного
-  таймаута; иногда помогает только перезагрузка.
+- inference takes seconds instead of 50–80 ms, and the detector returns stale
+  boxes;
+- the frame shows `no det Ns` even though the stream is running;
+- `kill -9` does not kill a process stuck in the TPU ioctl until the driver
+  timeout expires; sometimes only a reboot helps.
 
-Проблема не в модели: она проявляется на разных YOLO-моделях и на других
-приложениях, использующих TPU.
+The problem is not in the model: it occurs with different YOLO models and with
+other applications that use the TPU.
 
-## Причина
+## Cause
 
-В `soph_tpu.ko` пять ожиданий завершения команды
-(`wait_for_completion_interruptible_timeout`) стоят с таймаутом **15000 тиков**.
-При `HZ=250` это **60 секунд**. Если TPU не присылает прерывание (потерянный
-dmabuf-fence, сбой планировщика), вызывающий поток блокируется на минуту.
-Очередь команд за ним встаёт, приложение не может ни получить ошибку, ни
-пересоздать handle.
+In `soph_tpu.ko`, five command-completion waits
+(`wait_for_completion_interruptible_timeout`) use a timeout of **15000 ticks**.
+With `HZ=250` this is **60 seconds**. If the TPU does not send an interrupt
+(a lost dmabuf fence, a scheduler failure), the calling thread blocks for a
+minute. The command queue behind it stalls, and the application can neither
+receive an error nor recreate the handle.
 
-## Что делает патч
+## What the patch does
 
-Пять констант заменяются на **250 тиков = 1 секунда**. Логика драйвера не
-меняется — уменьшается только максимальное время ожидания. После сбоя
-`stream_yolo` получает ошибку примерно через секунду, снимает и заново
-регистрирует модель, поток продолжает работать.
+The five constants are replaced with **250 ticks = 1 second**. The driver
+logic does not change — only the maximum wait time is reduced. After a
+failure, `stream_yolo` receives an error in about a second, unloads and
+re-registers the model, and the stream keeps running.
 
-| Сайт | Смещение | Было | Стало |
+| Site | Offset | Before | After |
 |---|---|---|---|
 | 1 | 7568 | `91 65 93 85 85 a9` | `81 45 93 85 a5 0f` |
 | 2 | 7940 | `91 65 93 85 85 a9` | `81 45 93 85 a5 0f` |
@@ -45,19 +47,20 @@ dmabuf-fence, сбой планировщика), вызывающий пото�
 | 4 | 8658 | `91 67 93 87 87 a9` | `81 47 93 87 a7 0f` |
 | 5 | 9934 | `91 65 93 85 85 a9` | `81 45 93 85 a5 0f` |
 
-Контрольные суммы модуля (размер 70536 байт):
+Module checksums (size 70536 bytes):
 
-| Состояние | md5 |
+| State | md5 |
 |---|---|
-| штатный | `bc70f809190c0e41aeb2d3863da4581d` |
-| пропатченный | `3c0545f7a42b233987c9e52ebc56affd` |
+| stock | `bc70f809190c0e41aeb2d3863da4581d` |
+| patched | `3c0545f7a42b233987c9e52ebc56affd` |
 
-Патчер сначала проверяет все пять сайтов и md5. Если модуль другого размера,
-другой версии или байты не совпадают — он отказывается что-либо менять.
+The patcher first verifies all five sites and the md5. If the module has a
+different size, a different version, or the bytes do not match, it refuses to
+change anything.
 
-## Установка
+## Installation
 
-Скопируйте каталог на плату и запустите патчер (по умолчанию он берёт
+Copy the directory to the board and run the patcher (by default it uses
 `/mnt/system/ko/soph_tpu.ko`):
 
 ```sh
@@ -66,16 +69,16 @@ ssh root@<IP> 'sh /root/tpu-fix/patch_tpu.sh'
 ssh root@<IP> reboot
 ```
 
-Если модуль лежит в другом месте:
+If the module is located elsewhere:
 
 ```sh
 ssh root@<IP> 'sh /root/tpu-fix/patch_tpu.sh /path/to/soph_tpu.ko'
 ```
 
-Патчер создаёт резервную копию `soph_tpu.ko.orig` рядом с модулем. Повторный
-запуск на уже пропатченном файле ничего не делает.
+The patcher creates a `soph_tpu.ko.orig` backup next to the module. Running it
+again on an already patched file does nothing.
 
-## Проверка
+## Verification
 
 ```sh
 ssh root@<IP> 'md5sum /mnt/system/ko/soph_tpu.ko'
@@ -85,33 +88,33 @@ ssh root@<IP> 'lsmod | grep soph_tpu'
 ssh root@<IP> 'dmesg | grep -i "soph_tpu\|tpu"'
 ```
 
-После запуска потока оставьте его под нагрузкой на несколько минут. При
-появлении `run dmabuf timeout` детекция должна восстанавливаться за 1–2 с,
-а не замирать на десятки секунд.
+After starting the stream, leave it under load for a few minutes. When
+`run dmabuf timeout` appears, detection should recover within 1–2 s instead of
+freezing for tens of seconds.
 
-## Откат
+## Rollback
 
 ```sh
 ssh root@<IP> 'cp /mnt/system/ko/soph_tpu.ko.orig /mnt/system/ko/soph_tpu.ko'
 ssh root@<IP> 'sync && reboot'
 ```
 
-Если резервной копии нет, возьмите оригинальный модуль из свежего образа
-LicheeRV Nano.
+If there is no backup, take the original module from a fresh LicheeRV Nano
+image.
 
-## Совместимость и ограничения
+## Compatibility and limitations
 
-- Проверено на штатном образе LicheeRV Nano с ядром
-  `5.10.260-tag-20260927-g3ac35f59d279` (`HZ=250`, модуль 70536 байт).
-- На другом ядре или другой версии драйвера патчер откажется работать: не
-  пытайтесь обойти проверку.
-- Это **mitigation**, а не исправление первопричины в железе/драйвере.
-  Сообщения `run dmabuf timeout` в `dmesg` могут остаться, но минутных
-  залипаний больше нет.
-- Зависание камеры при закрытии (`vb_qbuf`, состояние `D`) патчем не
-  исправляется. Если процесс не умирает, нужен `reboot`.
-- Модуль — GPL-компонент Cvitek/Sophgo; в `strings` он содержит
-  `license=GPL` и автора `Wellken Chen`. Исходников драйвера в образе нет,
-  поэтому мы не распространяем ни оригинальный, ни пропатченный `.ko`, а
-  только патчер. Если вы публикуете изменённый модуль, соблюдайте GPL и
-  приложите соответствующий исходный код.
+- Tested on the stock LicheeRV Nano image with kernel
+  `5.10.260-tag-20260927-g3ac35f59d279` (`HZ=250`, module 70536 bytes).
+- On a different kernel or driver version the patcher refuses to work: do not
+  try to bypass the check.
+- This is a **mitigation**, not a fix for the root cause in the
+  hardware/driver. `run dmabuf timeout` messages may remain in `dmesg`, but
+  the minute-long stalls are gone.
+- The camera close hang (`vb_qbuf`, state `D`) is not fixed by the patch. If
+  the process does not die, a `reboot` is required.
+- The module is a GPL component from Cvitek/Sophgo; its `strings` contain
+  `license=GPL` and the author `Wellken Chen`. The driver sources are not
+  available in the image, so we distribute neither the original nor the
+  patched `.ko`, only the patcher. If you publish a modified module, comply
+  with the GPL and include the corresponding source code.

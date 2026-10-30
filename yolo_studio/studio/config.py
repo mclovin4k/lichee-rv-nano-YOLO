@@ -1,4 +1,4 @@
-"""Настройки приложения: ~/.config/yolo-studio/config.json."""
+"""Application settings: ~/.config/yolo-studio/config.json."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from pathlib import Path
 APP_DIR = Path(__file__).resolve().parent.parent
 
 DEFAULTS: dict = {
-    "board_ip": "",  # адрес у каждой платы свой — задаётся в настройках
+    "board_ip": "",  # each board has its own address — set it in Settings
     "board_user": "root",
     "board_password": "root",
     "stream_port": 7777,

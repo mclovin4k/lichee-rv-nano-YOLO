@@ -7,39 +7,39 @@
 extern "C" {
 #endif
 
-/* Дополнительный канал VPSS (группа 0, канал 1) с RGB_888 — в этом формате
-   TDL принимает кадр. Канал открывается после того, как камера уже подняла
-   группу 0. 0 — успех. */
+/* Additional VPSS channel (group 0, channel 1) with RGB_888 — TDL accepts a
+   frame in this format. The channel is opened after the camera has already
+   brought up group 0. 0 — success. */
 int vpss_face_open(int src_w, int src_h, int rot);
 
-/* Номер свободной VPSS-группы (-1, если не определить): группы 0..2 на
-   этой прошивке созданы системой, TDL должен брать следующую. */
+/* Number of a free VPSS group (-1 if it cannot be determined): groups 0..2
+   are created by the system on this firmware, TDL must take the next one. */
 int vpss_face_available_grp(void);
 
-/* 1 — группу можно создать (свободна), 0 — занята. */
+/* 1 — the group can be created (free), 0 — busy. */
 int vpss_face_group_free(int grp);
 
-/* Уничтожить группу (нужно после DestroyHandle TDL). 0 — успех. */
+/* Destroy the group (required after TDL DestroyHandle). 0 — success. */
 int vpss_face_destroy_grp(int grp);
 
-/* Остановить группу и канал 0 (иначе DestroyGrp виснет). */
+/* Stop the group and channel 0 (otherwise DestroyGrp hangs). */
 int vpss_face_stop_grp(int grp);
 
-/* Забрать самый свежий кадр (0 — успех). Кадр удерживается до release. */
+/* Get the freshest frame (0 — success). The frame is held until release. */
 int vpss_face_get(VIDEO_FRAME_INFO_S *fi, int timeout_ms);
 void vpss_face_release(VIDEO_FRAME_INFO_S *fi);
 
-/* Доступ к пикселям кадра (mapping в память CPU). NULL — не удалось. */
+/* Access frame pixels (mapping into CPU memory). NULL — failed. */
 void *vpss_face_map(const VIDEO_FRAME_INFO_S *fi, uint32_t *len);
 void vpss_face_unmap(void *p, uint32_t len);
 
-/* То же, но кадр повёрнут на SY_ROTATE градусов (в софте) — для TDL. */
+/* Same, but the frame is rotated by SY_ROTATE degrees (in software) — for TDL. */
 int vpss_face_get_rot(VIDEO_FRAME_INFO_S *fi, int timeout_ms);
 void vpss_face_release_rot(VIDEO_FRAME_INFO_S *fi);
 
 void vpss_face_close(void);
 
-/* Диагностика (SY_VPSS_TEST): какие VPSS-группы можно создать. */
+/* Diagnostics (SY_VPSS_TEST): which VPSS groups can be created. */
 int vpss_face_selftest(void);
 
 #ifdef __cplusplus

@@ -1,7 +1,7 @@
-/* face_stream — MJPEG-поток с детекцией и распознаванием лиц на LicheeRV Nano.
-   Отдельное приложение: не трогает stream_yolo/start_stream.sh.
-   Захват NV21 через OpenCV-CVI backend, инференс TDL (SCRFD + cviface),
-   веб-морда на том же порту 7777 (/ — страница, /stream — MJPEG). */
+/* face_stream — MJPEG stream with face detection and recognition on LicheeRV Nano.
+   Standalone application: does not touch stream_yolo/start_stream.sh.
+   NV21 capture through the OpenCV-CVI backend, TDL inference (SCRFD + cviface),
+   web UI on the same port 7777 (/ — page, /stream — MJPEG). */
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -29,7 +29,7 @@ extern "C" {
 #include "draw_nv21.h"
 }
 
-/* NV21-цвета (Y, U, V). */
+/* NV21 colors (Y, U, V). */
 static const uint8_t COL_GREEN_Y = 145, COL_GREEN_U = 54, COL_GREEN_V = 34;
 static const uint8_t COL_RED_Y = 76, COL_RED_U = 84, COL_RED_V = 255;
 static const uint8_t COL_YELLOW_Y = 210, COL_YELLOW_U = 16, COL_YELLOW_V = 146;
@@ -53,14 +53,14 @@ static int env_int(const char *name, int def) {
     return (e != NULL) ? atoi(e) : def;
 }
 
-/* ---------- антиподделка (фото / экран) ---------- */
-/* Liveness-модель на этой прошивке не работает, поэтому подделку ловим по
-   динамике картинки в области лица:
-   - настоящее лицо всегда «дышит» (шум сенсора, моргание, микродвижения) —
-     область лица меняется от кадра к кадру;
-   - фото (распечатанное или на экране) статично: область не меняется вовсе;
-   - экран мерцает: меняется вся область сразу и почти одинаково.
-   Решение принимается по самому крупному лицу в кадре. */
+/* ---------- anti-spoofing (photo / screen) ---------- */
+/* The liveness model does not work on this firmware, so spoofing is caught by
+   the dynamics of the face area:
+   - a real face always "breathes" (sensor noise, blinking, micro-movements) —
+     the face area changes from frame to frame;
+   - a photo (printed or on a screen) is static: the area does not change at all;
+   - a screen flickers: the whole area changes at once and almost uniformly.
+   The decision is made from the largest face in the frame. */
 
 #define ASF_GRID 16
 
@@ -68,32 +68,33 @@ struct AntiSpoof {
     float face_prev[ASF_GRID * ASF_GRID];
     float glob_prev[ASF_GRID * ASF_GRID];
     int have;
-    int static_run;   /* подряд кадров: лицо не меняется */
-    int screen_run;   /* подряд кадров: равномерное мерцание */
-    int spoof;        /* вердикт: 1 — подделка */
+    int static_run;   /* consecutive frames: face does not change */
+    int screen_run;   /* consecutive frames: uniform flicker */
+    int spoof;        /* verdict: 1 — spoof */
     float face_diff;
     float glob_diff;
     int active;
     int log_n;
-    float period;   /* автокорреляция: высокая -> регулярный растр */
-    float chroma;   /* корреляция R/B: низкая -> субпиксели экрана */
-    float hf;       /* энергия ВЧ (текстура кожи) */
-    float sat;      /* средняя насыщенность */
-    float res;      /* остаток после компенсации общего движения */
-    float noise;    /* шум фона (шум камеры) */
-    float gshift;   /* сдвиг сцены между кадрами, px */
+    float period;   /* autocorrelation: high -> regular pattern */
+    float chroma;   /* R/B correlation: low -> screen subpixels */
+    float hf;       /* high-frequency energy (skin texture) */
+    float sat;      /* mean saturation */
+    float res;      /* residual after global motion compensation */
+    float noise;    /* background noise (camera noise) */
+    float gshift;   /* scene shift between frames, px */
 };
 static AntiSpoof g_asf;
-static float asf_per_thr = 0.55f;    /* порог «растр» */
-static float asf_chroma_thr = 0.75f; /* порог «экран» */
+static float asf_per_thr = 0.55f;    /* "pattern" threshold */
+static float asf_chroma_thr = 0.75f; /* "screen" threshold */
 
-/* Метрика «растр»: автокорреляция ВЧ-части яркости на ненулевых сдвигах.
-   У экрана (пиксельная сетка) и у печати (растр) есть регулярный период — после
-   high-pass автокорреляция на этом периоде высокая. У живой кожи (шум, поры,
-   волоски) такой регулярности нет: ВЧ-сигнал некоррелирован. */
+/* "Pattern" metric: autocorrelation of the high-frequency part of luma at
+   non-zero shifts. A screen (pixel grid) and a print (halftone) have a regular
+   period — after a high-pass the autocorrelation at that period is high. Live
+   skin (noise, pores, hair) has no such regularity: the HF signal is
+   uncorrelated. */
 #define ASF_AC_W 48
 
-/* High-pass: вычитаем локальное среднее 3x3. */
+/* High-pass: subtract the local 3x3 mean. */
 static void asf_highpass(float *v, int W, int H) {
     float tmp[ASF_AC_W * ASF_AC_W];
     memcpy(tmp, v, sizeof(tmp));
@@ -116,8 +117,8 @@ static void asf_highpass(float *v, int W, int H) {
     }
 }
 
-/* Энергия ВЧ: средний модуль разности по соседям (текстура кожи vs гладкая
-   печать). */
+/* HF energy: mean absolute neighbor difference (skin texture vs smooth
+   print). */
 static float asf_hf(const float *v, int W, int H) {
     double sum = 0.0;
     int n = 0;
@@ -130,7 +131,7 @@ static float asf_hf(const float *v, int W, int H) {
     return (n > 0) ? (float)(sum / n) : 0.0f;
 }
 
-/* Средняя яркость прямоугольной области (для контраста глаз). */
+/* Mean luma of a rectangular region (for eye contrast). */
 static float asf_region_mean(const uint8_t *rgb, uint32_t stride, int w, int h, int x1, int y1,
                              int x2, int y2) {
     if (x1 < 0) x1 = 0;
@@ -151,7 +152,7 @@ static float asf_region_mean(const uint8_t *rgb, uint32_t stride, int w, int h, 
     return (n > 0) ? (float)(sum / n) : -1.0f;
 }
 
-/* Средняя насыщенность области (max-min по каналу). */
+/* Mean saturation of a region (max-min per channel). */
 static float asf_saturation(const uint8_t *rgb, uint32_t stride, int w, int h, int x1, int y1, int x2,
                             int y2) {
     double sum = 0.0;
@@ -202,9 +203,9 @@ static float asf_periodicity(const float *vin, int W, int H) {
     return best;
 }
 
-/* Метрика «экран»: на экране цветные субпиксели смещены, поэтому на резких
-   перепадах сигналы R и B расходятся по фазе и коррелируют хуже, чем в
-   натуральном изображении (кожа). */
+/* "Screen" metric: on a screen the color subpixels are offset, so at sharp
+   edges the R and B signals are out of phase and correlate worse than in a
+   natural image (skin). */
 static float asf_chroma_corr(const uint8_t *rgb, uint32_t stride, int w, int h, int x1, int y1,
                              int x2, int y2) {
     double sr = 0.0, sb = 0.0, srb = 0.0;
@@ -227,7 +228,7 @@ static float asf_chroma_corr(const uint8_t *rgb, uint32_t stride, int w, int h, 
     return (float)(srb / sqrt(sr * sb));
 }
 
-/* Плотная сетка яркости 48x48 (для метрики периодичности). */
+/* Dense 48x48 luma grid (for the periodicity metric). */
 static void asf_grid_dense(const uint8_t *rgb, uint32_t stride, int w, int h, int x1, int y1, int x2,
                            int y2, float *grid, int W, int H) {
     for (int gy = 0; gy < H; gy++) {
@@ -256,14 +257,14 @@ static void asf_grid_dense(const uint8_t *rgb, uint32_t stride, int w, int h, in
             grid[gy * W + gx] = (n > 0) ? sum / n : 0.0f;
         }
     }
-    /* убираем среднее — автокорреляция по постоянной компоненте не нужна */
+    /* remove the mean — autocorrelation of the DC component is not needed */
     float mean = 0.0f;
     for (int i = 0; i < W * H; i++) mean += grid[i];
     mean /= (float)(W * H);
     for (int i = 0; i < W * H; i++) grid[i] -= mean;
 }
 
-/* Сетка средней яркости региона (16x16 ячеек). */
+/* Mean luma grid of the region (16x16 cells). */
 static void asf_grid(const uint8_t *rgb, uint32_t stride, int w, int h, int x1, int y1, int x2,
                      int y2, float *grid) {
     for (int gy = 0; gy < ASF_GRID; gy++) {
@@ -310,7 +311,7 @@ static void asf_diff(const float *a, const float *b, float *mean, int *active, f
     *active = act;
 }
 
-/* IoU двух рамок: рамка считается той же, если пересечение достаточно. */
+/* IoU of two boxes: a box is considered the same if the overlap is sufficient. */
 static float box_iou(const face_box_t &a, const face_box_t &b) {
     const int x1 = a.x1 > b.x1 ? a.x1 : b.x1;
     const int y1 = a.y1 > b.y1 ? a.y1 : b.y1;
@@ -324,7 +325,7 @@ static float box_iou(const face_box_t &a, const face_box_t &b) {
     return inter / (aa + bb - inter);
 }
 
-/* ---------- детекция лиц ---------- */
+/* ---------- face detection ---------- */
 struct FaceState {
     std::mutex m;
     std::vector<face_box_t> boxes;
@@ -335,10 +336,10 @@ struct FaceState {
 };
 static FaceState g_face;
 
-/* Треки лиц: склеивают кадры, где детектор «мигает» (то лицо, то нет),
-   сглаживают дрожание рамки и держат её до 0.5 с после пропажи. В оверлей
-   попадают только треки, найденные детектором дважды, поэтому одиночные
-   мусорные рамки в поток не проскакивают. */
+/* Face tracks: stitch together frames where the detector "blinks" (face
+   present, then absent), smooth box jitter and keep the box for up to 0.5 s
+   after it disappears. Only tracks found by the detector twice get into the
+   overlay, so isolated garbage boxes never leak into the stream. */
 struct FaceTrack {
     face_box_t box;
     double last_seen;
@@ -347,29 +348,29 @@ struct FaceTrack {
 };
 static std::vector<FaceTrack> g_tracks;
 
-static int g_max_boxes = 8;    /* больше рамок за кадр — сбой детекции */
+static int g_max_boxes = 8;    /* more boxes per frame — detection failure */
 static int g_many_boxes = 0;
-static int g_garbage_run = 0;  /* мусорных кадров подряд */
-static int g_pub_max = 5;      /* сколько рамок максимум показывать */
+static int g_garbage_run = 0;  /* consecutive garbage frames */
+static int g_pub_max = 5;      /* how many boxes to show at most */
 static float g_pub_score = 0.55f;
 static int g_pub_min = 48;
-static float g_yaw = 0.0f, g_pitch = 0.0f;  /* положение головы (по ландмаркам) */
-static float g_face_luma = 0.0f;            /* средняя яркость лица в кадре */
-static float g_eye_contrast = 0.0f;         /* контраст «щека минус глаз» */
-static float g_lex = 0.0f, g_ley = 0.0f, g_rex = 0.0f, g_rey = 0.0f; /* сглаженные глаза */
+static float g_yaw = 0.0f, g_pitch = 0.0f;  /* head pose (from landmarks) */
+static float g_face_luma = 0.0f;            /* mean face luma in the frame */
+static float g_eye_contrast = 0.0f;         /* "cheek minus eye" contrast */
+static float g_lex = 0.0f, g_ley = 0.0f, g_rex = 0.0f, g_rey = 0.0f; /* smoothed eyes */
 static int g_eyes_ok = 0;
-static face_box_t g_track;                  /* наблюдаемое лицо (трек) */
+static face_box_t g_track;                  /* observed face (track) */
 static double g_track_t = 0.0;
 static int g_track_ok = 0;
-static int g_seen_live = 0;                /* подтверждённое лицо было в кадре */
+static int g_seen_live = 0;                /* a confirmed face was in the frame */
 static double g_seen_live_t = 0.0;
-static float asf_static_thr = 0.8f;  /* порог «лицо не меняется» */
-static int asf_run_static = 40;      /* столько кадров подряд -> подделка */
-static int asf_run_screen = 5;       /* столько кадров мерцания -> подделка */
+static float asf_static_thr = 0.8f;  /* "face does not change" threshold */
+static int asf_run_static = 40;      /* this many consecutive frames -> spoof */
+static int asf_run_screen = 5;       /* this many flicker frames -> spoof */
 
-/* Детекция живёт в отдельном потоке: если TPU/TDL зависнет, видеопоток должен
-   продолжаться. Ошибки подряд -> пересоздаём TDL (модель+handle). */
-static volatile double g_hb = 0.0;   /* «пульс» потока детекции */
+/* Detection lives in a separate thread: if the TPU/TDL hangs, the video stream
+   must keep going. Errors in a row -> recreate TDL (model+handle). */
+static volatile double g_hb = 0.0;   /* detection thread "heartbeat" */
 
 static void *face_worker(void *arg) {
     (void)arg;
@@ -384,11 +385,12 @@ static void *face_worker(void *arg) {
         const int n = face_process(&rgb, fb, 16);
         const double dt = mono_ms() - t;
 
-        /* Сторож: при сбое TPU (в логе `run cmdbuf failed`) TDL может годами
-           отдавать один и тот же результат — рамки «замерзают», хотя в кадре
-           уже другой человек. Если набор рамок (координаты+score) не менялся
-           5 с, пересоздаём TDL. У живой камеры score меняется каждый кадр,
-           так что ложных срабатываний нет. */
+        /* Watchdog: on a TPU failure (log shows `run cmdbuf failed`) TDL may
+           return the same result forever — the boxes "freeze" even though a
+           different person is already in the frame. If the set of boxes
+           (coordinates+score) has not changed for 5 s, recreate TDL. With a
+           live camera the score changes every frame, so there are no false
+           triggers. */
         {
             static unsigned long long last_sig = 0;
             static double last_change = 0.0;
@@ -406,7 +408,7 @@ static void *face_worker(void *arg) {
                 last_sig = sig;
                 last_change = now;
             } else if (n > 0 && now - last_change > 3000.0) {
-                printf("face: детекция не меняется %.0f с, пересоздаю TDL\n",
+                printf("face: detection unchanged for %.0f s, recreating TDL\n",
                        (now - last_change) / 1000.0);
                 fflush(stdout);
                 face_restart();
@@ -420,24 +422,26 @@ static void *face_worker(void *arg) {
             }
         }
 
-        /* Детектор на профиле/в движении «мигает»: кадр с лицом, кадр без.
-           Склеиваем детекции в треки по пересечению (или близости центров),
-           сглаживаем рамку и публикуем только подтверждённые треки. */
+        /* The detector "blinks" on a profile/in motion: a frame with a face, a
+           frame without. We stitch detections into tracks by overlap (or
+           center proximity), smooth the box and publish only confirmed
+           tracks. */
         {
             const double now = mono_ms();
             if (n < 0) {
-                /* ошибка инференса: последние рамки не трогаем — они исчезнут
-                   по таймауту свежести в потоке. */
+                /* inference error: leave the last boxes alone — they will
+                   disappear by the freshness timeout in the stream. */
             } else if (n > g_max_boxes) {
                 if (g_garbage_run < 1000) g_garbage_run++;
                 if (!g_many_boxes) {
                     g_many_boxes = 1;
-                    printf("face: аномально много рамок (%d > %d), кадр пропущен\n", n,
+                    printf("face: abnormally many boxes (%d > %d), frame skipped\n", n,
                            g_max_boxes);
                     fflush(stdout);
                 }
-                /* Серия мусорных кадров (движение камеры, сбой ISP): убираем
-                   и треки, и старые рамки — иначе они тянутся за сценой. */
+                /* A series of garbage frames (camera motion, ISP failure):
+                   drop both the tracks and the old boxes — otherwise they
+                   trail behind the scene. */
                 if (g_garbage_run >= 2) {
                     g_tracks.clear();
                     std::lock_guard<std::mutex> lk(g_face.m);
@@ -447,8 +451,8 @@ static void *face_worker(void *arg) {
             } else {
                 g_many_boxes = 0;
                 g_garbage_run = 0;
-                /* Отсеиваем заведомый мусор: одиночные низкоуверенные и
-                   слишком мелкие рамки, а также рамки странной формы. */
+                /* Filter out obvious garbage: isolated low-confidence and
+                   too-small boxes, as well as boxes of a strange shape. */
                 face_box_t vd[16];
                 int nd = 0;
                 for (int i = 0; i < n && nd < 16; i++) {
@@ -468,7 +472,7 @@ static void *face_worker(void *arg) {
                         if (det_tr[i] >= 0) continue;
                         float v = box_iou(vd[i], g_tracks[t].box);
                         if (v < 0.15f) {
-                            /* сдвиг камеры: та же рамка рядом и похожего размера */
+                            /* camera shift: the same box nearby and of similar size */
                             const int aw = vd[i].x2 - vd[i].x1;
                             const int ah = vd[i].y2 - vd[i].y1;
                             const int bw = g_tracks[t].box.x2 - g_tracks[t].box.x1;
@@ -502,7 +506,7 @@ static void *face_worker(void *arg) {
                     if (tr_det[t] < 0) continue;
                     const face_box_t &d = vd[tr_det[t]];
                     face_box_t &b = g_tracks[t].box;
-                    /* сглаживание рамки: на 3/4 старая, на 1/4 новая */
+                    /* box smoothing: 3/4 old, 1/4 new */
                     b.x1 = (b.x1 * 3 + d.x1 + 2) / 4;
                     b.y1 = (b.y1 * 3 + d.y1 + 2) / 4;
                     b.x2 = (b.x2 * 3 + d.x2 + 2) / 4;
@@ -523,8 +527,8 @@ static void *face_worker(void *arg) {
                     g_tracks[t].missed = 0;
                     if (g_tracks[t].hits < 1000000) g_tracks[t].hits++;
                 }
-                /* пропуск детекции на 2 кадра — трек перестаёт быть
-                   подтверждённым (мусор не накапливает «попадания») */
+                /* a detection miss for 2 frames — the track stops being
+                   confirmed (garbage does not accumulate "hits") */
                 for (size_t t = 0; t < tr_det.size(); t++) {
                     if (tr_det[t] >= 0) continue;
                     if (++g_tracks[t].missed >= 2) g_tracks[t].hits = 0;
@@ -538,14 +542,14 @@ static void *face_worker(void *arg) {
                     t.hits = 1;
                     g_tracks.push_back(t);
                 }
-                /* трек живёт 0.3 с после последней детекции */
+                /* a track lives 0.3 s after the last detection */
                 for (size_t t = 0; t < g_tracks.size();) {
                     if (now - g_tracks[t].last_seen > 300.0)
                         g_tracks.erase(g_tracks.begin() + (long)t);
                     else
                         t++;
                 }
-                /* Публикуем только устойчивые треки (3 попадания). */
+                /* Publish only stable tracks (3 hits). */
                 std::vector<face_box_t> pub;
                 for (size_t t = 0; t < g_tracks.size(); t++)
                     if (g_tracks[t].hits >= 3) pub.push_back(g_tracks[t].box);
@@ -553,7 +557,7 @@ static void *face_worker(void *arg) {
                     return (long)(a.x2 - a.x1) * (a.y2 - a.y1) >
                            (long)(b.x2 - b.x1) * (b.y2 - b.y1);
                 });
-                /* дубли одной и той же рамки не публикуем */
+                /* do not publish duplicates of the same box */
                 std::vector<face_box_t> uniq;
                 for (size_t k = 0; k < pub.size() && (int)uniq.size() < g_pub_max; k++) {
                     bool dup = false;
@@ -569,7 +573,7 @@ static void *face_worker(void *arg) {
                     g_face.boxes = uniq;
                     g_face.boxes_ms = uniq.empty() ? 0.0 : now;
                 }
-                /* главный трек (крупнейший) — для живости и антиподделки */
+                /* main track (largest) — for liveness and anti-spoofing */
                 if (!uniq.empty()) {
                     g_track = uniq[0];
                     g_track_t = now;
@@ -580,13 +584,13 @@ static void *face_worker(void *arg) {
         if (g_track_ok && (mono_ms() - g_track_t) > 800.0) g_track_ok = 0;
         if (!g_track_ok) face_live_update(0, 0, 0, 0, 0.0f, 0.0f, 0.0f, 0);
 
-        /* Антиподделка по динамике лица (нужен доступ к пикселям кадра). */
+        /* Anti-spoofing by face dynamics (needs access to frame pixels). */
         if (g_track_ok) {
             uint32_t map_len = 0;
             void *map = vpss_face_map(&rgb, &map_len);
             if (map != NULL) {
                 const VIDEO_FRAME_S &vf = rgb.stVFrame;
-                /* Пул канала без маппинга: пиксели читаем через map */
+                /* Channel pool without mapping: read pixels through map */
                 const uint8_t *rgbp = (const uint8_t *)map;
                 if (rgbp != NULL) {
                     const int w = (int)vf.u32Width, h = (int)vf.u32Height;
@@ -610,7 +614,7 @@ static void *face_worker(void *arg) {
                     g_asf.hf = asf_hf(dgrid, ASF_AC_W, ASF_AC_W);
                     g_asf.period = asf_periodicity(dgrid, ASF_AC_W, ASF_AC_W);
                     {
-                        /* внутренняя часть лица: без волос и фона */
+                        /* inner part of the face: without hair and background */
                         const int mx = (x2 - x1) / 5, my = (y2 - y1) / 5;
                         const int ix1 = x1 + mx, iy1 = y1 + my;
                         const int ix2 = x2 - mx, iy2 = y2 - my;
@@ -630,10 +634,10 @@ static void *face_worker(void *arg) {
                         g_asf.glob_diff = gm;
                         g_asf.active = fact;
                         g_asf.noise = gm;
-                        /* Компенсация общего движения: ищем сдвиг сцены, при
-                           котором глобальная сетка совпадает лучше всего, и
-                           применяем его к лицу. У плоской картинки остаток
-                           ~= 0, у живого лица остаётся собственное движение. */
+                        /* Global motion compensation: find the scene shift at
+                           which the global grid matches best, and apply it to
+                           the face. For a flat image the residual is ~= 0; a
+                           live face retains its own motion. */
                         {
                             int best_dx = 0, best_dy = 0;
                             float best_err = 1e9f;
@@ -684,18 +688,19 @@ static void *face_worker(void *arg) {
                         g_asf.static_run = still ? g_asf.static_run + 1 : 0;
                         g_asf.screen_run = uniform ? g_asf.screen_run + 1 : 0;
                         const bool scene_moves = (gm > 2.0f);
-                        /* Вердикт:
-                           - регулярный растр (печать, пиксельная сетка экрана);
-                           - «разъехавшиеся» цвета (субпиксели экрана);
-                           - равномерное мерцание всего лица (экран);
-                           - лицо замерло, а сцена двигается (приклеенное фото).
-                           Живое неподвижное лицо само по себе не считается
-                           подделкой: датчик шумит слабо, лицо может не двигаться. */
-                        /* Растр и цветовые каймы на живом лице и на фото
-                           различаются слабо — оставляем их только как метрики
-                           в логе. Решение принимает активная проверка
-                           (поворот головы) плюс признаки «лицо замерло, а
-                           сцена жива» и «равномерное мерцание». */
+                        /* Verdict:
+                           - regular pattern (print, screen pixel grid);
+                           - "diverged" colors (screen subpixels);
+                           - uniform flicker of the whole face (screen);
+                           - the face froze while the scene moves (a pasted photo).
+                           A live motionless face by itself is not considered
+                           a spoof: the sensor is only slightly noisy, the face
+                           may not move. */
+                        /* Pattern and color fringes differ only slightly
+                           between a live face and a photo — we keep them only
+                           as metrics in the log. The decision is made by the
+                           active check (head turn) plus the "face froze while
+                           the scene is alive" and "uniform flicker" signs. */
                         if (uniform || (still && scene_moves))
                             g_asf.spoof = 1;
                         else if (g_asf.static_run == 0 && g_asf.screen_run == 0)
@@ -703,17 +708,17 @@ static void *face_worker(void *arg) {
                         memcpy(g_asf.face_prev, fgrid, sizeof(fgrid));
                         memcpy(g_asf.glob_prev, ggrid, sizeof(ggrid));
                     }
-                    /* Пассивная живость: яркость каждого глаза и переносицы.
-                       Резкое «просветление» глаза = моргание (веко закрыло
-                       зрачок). Разность с переносицей убирает влияние поворота
-                       головы и освещения. */
+                    /* Passive liveness: luma of each eye and the nose bridge.
+                       A sharp "brightening" of the eye = blink (the eyelid
+                       covered the pupil). Subtracting the nose bridge removes
+                       the effect of head rotation and lighting. */
                     {
                         int lvalid = 0;
                         float eye_l = 0.0f, eye_r = 0.0f, lref = 0.0f;
                         if (tface.have_lm) {
                             const float *lm = tface.lm;
-                            /* сглаживаем центры глаз: дрожание ландмарок на
-                               мелком лице иначе выглядит как моргание */
+                            /* smooth the eye centers: landmark jitter on a
+                               small face would otherwise look like blinking */
                             if (!g_eyes_ok || fabsf(lm[0] - g_lex) > 18.0f ||
                                 fabsf(lm[1] - g_ley) > 18.0f) {
                                 g_lex = lm[0];
@@ -730,9 +735,9 @@ static void *face_worker(void *arg) {
                             const float ddx = g_rex - g_lex;
                             const float ddy = g_rey - g_ley;
                             const float ld = sqrtf(ddx * ddx + ddy * ddy);
-                            /* Мелкое лицо (глаза ближе 26 px) проверить нельзя:
-                               шум больше сигнала. Тогда только «Unknown», без
-                               обвинений в подделке. */
+                            /* A small face (eyes closer than 26 px) cannot be
+                               checked: noise exceeds the signal. Then show only
+                               "Unknown", without accusing of spoofing. */
                             if (ld >= 26.0f) {
                                 lref = asf_region_mean(rgbp, stride, w, h, (int)(lm[4] - 0.18f * ld),
                                                        (int)(lm[5] - 0.30f * ld),
@@ -750,9 +755,10 @@ static void *face_worker(void *arg) {
                                                         (int)(g_rey + 0.20f * ld));
                                 if (lref > 0.0f && eye_l > 0.0f && eye_r > 0.0f) {
                                     g_eye_contrast = lref - 0.5f * (eye_l + eye_r);
-                                    /* Глаза должны быть заметно темнее переносицы:
-                                       у бледной печати/мелкого лица сигнал меньше
-                                       шума, моргание там не проверить. */
+                                    /* The eyes must be noticeably darker than
+                                       the nose bridge: on a pale print/small
+                                       face the signal is below the noise, and
+                                       blinking cannot be checked there. */
                                     lvalid = (g_eye_contrast >= 12.0f) ? 1 : 0;
                                 }
                             }
@@ -764,8 +770,8 @@ static void *face_worker(void *arg) {
                         g_track.spoof = 1;
                         g_track.name[0] = 0;
                         if (g_asf.log_n++ < 8) {
-                            printf("face: возможна подделка (растр=%.2f цвет=%.2f diff=%.2f "
-                                   "сцена=%.2f)\n",
+                            printf("face: possible spoof (pattern=%.2f color=%.2f diff=%.2f "
+                                   "scene=%.2f)\n",
                                    g_asf.period, g_asf.chroma, g_asf.face_diff, g_asf.glob_diff);
                             fflush(stdout);
                         }
@@ -787,27 +793,27 @@ static void *face_worker(void *arg) {
             }
         }
         if (n >= 0 && dt > 5000.0) {
-            printf("face: инференс занял %.0f мс, пересоздаю TDL\n", dt);
+            printf("face: inference took %.0f ms, recreating TDL\n", dt);
             fflush(stdout);
             face_restart();
         }
         if (n == -5) {
-            /* liveness завис: пересоздаём TDL, чтобы вернуть TPU в рабочее
-               состояние (модель liveness при этом отключена). */
-            printf("face: liveness завис, пересоздаю TDL\n");
+            /* liveness hung: recreate TDL to bring the TPU back into a working
+               state (the liveness model is disabled in this case). */
+            printf("face: liveness hung, recreating TDL\n");
             fflush(stdout);
             face_restart();
             err_run = 0;
         }
         if (n < 0) {
             if (err_run == 1 || (err_run % 100) == 0) {
-                printf("face: инференс ошибка rc=%d (подряд %d)\n", n, err_run);
+                printf("face: inference error rc=%d (consecutive %d)\n", n, err_run);
                 fflush(stdout);
             }
             if (err_run == 30 || err_run == 200) {
-                printf("face: пересоздаю TDL после %d ошибок подряд\n", err_run);
+                printf("face: recreating TDL after %d consecutive errors\n", err_run);
                 fflush(stdout);
-                if (face_restart() != 0) printf("face: пересоздание TDL не удалось\n");
+                if (face_restart() != 0) printf("face: TDL recreation failed\n");
                 std::lock_guard<std::mutex> lk(g_face.m);
                 g_face.restarts++;
             }
@@ -817,17 +823,17 @@ static void *face_worker(void *arg) {
     return NULL;
 }
 
-/* Сторож: TPU иногда зависает так, что TDL не возвращается вообще (в логе
-   `run dmabuf failed`). Поток детекции в этот момент стоит, рамки «замерзают».
-   Если пульса нет 10 с — выходим с кодом 2, супервизор в start_face.sh
-   поднимет приложение заново. */
+/* Watchdog: the TPU sometimes hangs so badly that TDL never returns (log shows
+   `run dmabuf failed`). The detection thread is stuck at that point and the
+   boxes "freeze". If there is no heartbeat for 10 s — exit with code 2, and the
+   supervisor in start_face.sh will restart the application. */
 static void *face_watchdog(void *arg) {
     (void)arg;
     while (!g_stop) {
         usleep(1000 * 1000);
         const double hb = g_hb;
         if (hb > 0.0 && mono_ms() - hb > 10000.0) {
-            printf("face: поток детекции не отвечает %.0f с, перезапуск\n",
+            printf("face: detection thread unresponsive for %.0f s, restarting\n",
                    (mono_ms() - hb) / 1000.0);
             fflush(stdout);
             _exit(2);
@@ -836,8 +842,8 @@ static void *face_watchdog(void *arg) {
     return NULL;
 }
 
-/* Сохраняет RGB-кадр TDL в JPEG: проверка, что и в каком повороте видит
-   детектор. */
+/* Saves a TDL RGB frame as JPEG: verifies what the detector sees and in which
+   rotation. */
 static void dump_rgb_frame(const VIDEO_FRAME_INFO_S *fi, const char *path) {
     const VIDEO_FRAME_S &f = fi->stVFrame;
     const int w = (int)f.u32Width, h = (int)f.u32Height;
@@ -846,7 +852,7 @@ static void dump_rgb_frame(const VIDEO_FRAME_INFO_S *fi, const char *path) {
     const uint32_t total = (uint32_t)w * (uint32_t)h * 3u + 4096u;
     uint8_t *v = (uint8_t *)CVI_SYS_MmapCache(base, total);
     if (v == NULL) {
-        printf("dump: mmap не удался\n");
+        printf("dump: mmap failed\n");
         return;
     }
     cv::Mat img(h, w, CV_8UC3);
@@ -872,8 +878,8 @@ static void dump_rgb_frame(const VIDEO_FRAME_INFO_S *fi, const char *path) {
     fflush(stdout);
 }
 
-/* Переводит координаты рамки из повёрнутого кадра TDL в координаты исходного
-   (того, что идёт в MJPEG). cw=1: ROTATION_90 в VPSS — по часовой. */
+/* Converts box coordinates from the rotated TDL frame to the coordinates of
+   the source frame (the one going to MJPEG). cw=1: ROTATION_90 in VPSS — clockwise. */
 static void rot_box_to_src(int rot, int cw, int sw, int sh, int *x1, int *y1, int *x2, int *y2) {
     const int a = *x1, b = *y1, c = *x2, d = *y2;
     if (rot == 90) {
@@ -893,7 +899,7 @@ static void rot_box_to_src(int rot, int cw, int sw, int sh, int *x1, int *y1, in
     }
 }
 
-/* Кириллица -> латиница: встроенный шрифт оверлея понимает только ASCII. */
+/* Cyrillic -> Latin: the built-in overlay font only understands ASCII. */
 static const char *cyr_latin(unsigned cp) {
     switch (cp) {
         case 0x410: return "A";  case 0x411: return "B";  case 0x412: return "V";
@@ -983,12 +989,12 @@ int main(int argc, char *argv[]) {
     const char *live_model = getenv("SY_LIVE_MODEL");
     if (live_model == NULL || live_model[0] == 0)
         live_model = "/root/models/face/cls_rgbliveness_256_256_INT8_cv181x.cvimodel";
-    /* Liveness-модель на этой сборке TDL вешает вызов (нужен RGB-кадр), поэтому
-       по умолчанию проверка фото выключена; включается SY_LIVE=1. */
+    /* The liveness model hangs the call on this TDL build (it needs an RGB
+       frame), so photo checking is off by default; enable it with SY_LIVE=1. */
     const char *live_env = getenv("SY_LIVE");
     const bool live_off = (live_env == NULL) || (live_env[0] != '1');
 
-    /* 0.40 — профильные лица дают меньший score, но на 0.5 они теряются. */
+    /* 0.40 — profile faces produce a lower score, but at 0.5 they are lost. */
     const float det_thr = env_float("SY_DET_THR", 0.40f);
     const float match_thr = env_float("SY_FACE_THR", 0.40f);
     const float live_thr = env_float("SY_LIVE_THR", 0.50f);
@@ -1007,25 +1013,25 @@ int main(int argc, char *argv[]) {
     asf_chroma_thr = env_float("SY_ASF_CHROMA", 0.75f);
     asf_run_static = env_int("SY_ASF_RUN", 40);
     asf_run_screen = env_int("SY_ASF_SCREEN", 5);
-    /* Камера в корпусе повёрнута на 90°: для детектора кадр надо повернуть. */
+    /* The camera in the case is rotated 90°: the frame must be rotated for the detector. */
     const int rot = env_int("SY_ROTATE", 0);
     const int rot_cw = env_int("SY_ROT_CW", 1);
 
-    printf("face_stream: %dx%d, поворот %d, лицо каждые %d кадров, thr det=%.2f match=%.2f "
+    printf("face_stream: %dx%d, rotation %d, face every %d frames, thr det=%.2f match=%.2f "
            "live=%.2f blink=%d/%dms boxes=%d/%d score=%.2f%s\n",
            cam_w, cam_h, rot, face_every, det_thr, match_thr, live_thr, live_keep_ms,
            live_check_ms, g_pub_max, g_max_boxes, g_pub_score, live_off ? " (off)" : "");
     fflush(stdout);
 
-    /* Захват: тот же CVI-бэкенд OpenCV, что и в stream_yolo. Кадр приходит
-       VB-backed в NV21, его же получает TDL и аппаратный JPEG. */
+    /* Capture: the same CVI OpenCV backend as in stream_yolo. The frame arrives
+       VB-backed in NV21, and the same frame goes to TDL and the hardware JPEG. */
     setenv("OPENCV_CVI_RAW", "1", 0);
     cv::VideoCapture cap;
     cap.set(cv::CAP_PROP_FRAME_WIDTH, cam_w);
     cap.set(cv::CAP_PROP_FRAME_HEIGHT, cam_h);
     cap.open(0);
     if (!cap.isOpened()) {
-        printf("face_stream: камера не открылась\n");
+        printf("face_stream: camera failed to open\n");
         return -1;
     }
 
@@ -1035,11 +1041,11 @@ int main(int argc, char *argv[]) {
         cap.releaseImagePtr();
     }
 
-    /* TDL инициализируем после того, как камера подняла свои VB-пулы: его
-       аллокации до открытия камеры ломают CVI_VI_EnableChn (нет буферов). */
+    /* Initialize TDL after the camera has raised its VB pools: allocating before
+       the camera opens breaks CVI_VI_EnableChn (no buffers). */
     if (face_init(fd_model, fr_model, live_off ? "" : live_model, faces_dir, det_thr, match_thr,
                   live_off ? -1.0f : live_thr) != 0) {
-        printf("face_stream: инициализация TDL не удалась\n");
+        printf("face_stream: TDL initialization failed\n");
         return -1;
     }
 
@@ -1056,18 +1062,18 @@ int main(int argc, char *argv[]) {
     int face_thr_ok = 0;
     const bool probe_mode = (getenv("SY_FACE_PROBE") != NULL);
     if (vpss_face_open(cam_w, cam_h, rot) != 0) {
-        printf("face_stream: RGB-канал VPSS не открылся, детекция лиц недоступна\n");
+        printf("face_stream: VPSS RGB channel failed to open, face detection unavailable\n");
         fflush(stdout);
     } else if (!probe_mode && pthread_create(&face_thr, NULL, face_worker, NULL) == 0) {
         face_thr_ok = 1;
         pthread_create(&wd_thr, NULL, face_watchdog, NULL);
     } else if (!probe_mode) {
-        printf("face_stream: поток детекции не запустился\n");
+        printf("face_stream: detection thread failed to start\n");
         fflush(stdout);
     }
     if (getenv("SY_VPSS_TEST") != NULL) vpss_face_selftest();
 
-    /* Диагностика на плате: несколько кадров через TDL, без стрима. */
+    /* On-board diagnostics: several frames through TDL, without streaming. */
     if (getenv("SY_FACE_PROBE") != NULL) {
         for (int i = 0; i < 12 && !g_stop; i++) {
             std::pair<void *, void *> ptrs = cap.capture(dummy);
@@ -1108,7 +1114,7 @@ int main(int argc, char *argv[]) {
     MJPEGWriter mjpeg(7777);
     mjpeg.setHttpHandler(web_handle);
     mjpeg.start();
-    printf("face_stream: UI http://<ip>:7777/ , поток /stream\n");
+    printf("face_stream: UI http://<ip>:7777/ , stream /stream\n");
     fflush(stdout);
 
     long frames = 0;
@@ -1141,7 +1147,7 @@ int main(int argc, char *argv[]) {
             infer_ms = g_face.infer_ms;
             errors = g_face.errors;
         }
-        const bool fresh = (mono_ms() - local_ms) < 700.0;   /* устаревшие рамки не держим */
+        const bool fresh = (mono_ms() - local_ms) < 700.0;   /* do not keep stale boxes */
 
         const size_t draw_n = (local.size() > (size_t)g_pub_max) ? (size_t)g_pub_max
                                                                  : local.size();
@@ -1170,8 +1176,9 @@ int main(int argc, char *argv[]) {
             char latin[64];
             if (known && !spoof) {
                 translit(b.name, latin, sizeof(latin));
-                /* До моргания имя предварительное: «имя?» жёлтым. После
-                   подтверждения живости — зелёная рамка и имя без «?». */
+                /* Before blinking the name is provisional: "name?" in yellow.
+                   After liveness confirmation — a green box and the name
+                   without "?". */
                 if (live_ok)
                     snprintf(label, sizeof(label), "%s %.2f", latin, b.sim);
                 else
@@ -1215,7 +1222,7 @@ int main(int argc, char *argv[]) {
                 if (pf != NULL) {
                     fwrite(jbuf.data(), 1, jlen, pf);
                     fclose(pf);
-                    printf("face: превью %s\n", path);
+                    printf("face: preview %s\n", path);
                     fflush(stdout);
                 }
             }
@@ -1240,26 +1247,26 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    printf("face_stream: остановка\n");
+    printf("face_stream: stopping\n");
     fflush(stdout);
     mjpeg.stop();
-    printf("face_stream: поток MJPEG остановлен\n");
+    printf("face_stream: MJPEG stream stopped\n");
     fflush(stdout);
     g_stop = 1;
     if (face_thr_ok) pthread_join(face_thr, NULL);
-    printf("face_stream: поток детекции остановлен\n");
+    printf("face_stream: detection thread stopped\n");
     fflush(stdout);
     vpss_face_close();
-    printf("face_stream: канал RGB закрыт\n");
+    printf("face_stream: RGB channel closed\n");
     fflush(stdout);
     venc_jpeg_deinit();
-    printf("face_stream: кодировщик закрыт\n");
+    printf("face_stream: encoder closed\n");
     fflush(stdout);
     cap.release();
-    printf("face_stream: камера закрыта\n");
+    printf("face_stream: camera closed\n");
     fflush(stdout);
     face_close();
-    printf("face_stream: TDL закрыт\n");
+    printf("face_stream: TDL closed\n");
     fflush(stdout);
     return 0;
 }

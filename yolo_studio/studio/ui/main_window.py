@@ -1,4 +1,4 @@
-"""Главное окно: вкладки, общий датасет, настройки."""
+"""Main window: tabs, shared dataset, settings."""
 
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ from .settings_dialog import SettingsDialog
 
 
 def classes_text(ds: Dataset) -> str:
-    word = "класс" if len(ds.class_names) == 1 else "классы"
+    word = "class" if len(ds.class_names) == 1 else "classes"
     return f"{word}: {', '.join(ds.class_names)}"
 
 
@@ -30,24 +30,24 @@ class MainWindow(QMainWindow):
         self.config = config
         self.dataset: Dataset | None = None
         self.last_cvimodel: Path | None = None
-        self.setWindowTitle("Lichee YOLO Studio — датасет и cvimodel для LicheeRV Nano")
+        self.setWindowTitle("Lichee YOLO Studio — dataset and cvimodel for LicheeRV Nano")
         self.resize(1380, 880)
         self._build_ui()
         self._load_last()
 
     def _build_ui(self) -> None:
-        bar = QToolBar("Главная")
+        bar = QToolBar("Main")
         bar.setMovable(False)
         self.addToolBar(bar)
 
-        act_open = QAction("Открыть датасет…", self)
+        act_open = QAction("Open dataset…", self)
         act_open.triggered.connect(self._open_dataset)
         bar.addAction(act_open)
-        act_settings = QAction("Настройки…", self)
+        act_settings = QAction("Settings…", self)
         act_settings.triggered.connect(self._settings)
         bar.addAction(act_settings)
         bar.addSeparator()
-        self.path_label = QLabel("датасет не выбран")
+        self.path_label = QLabel("no dataset selected")
         bar.addWidget(self.path_label)
 
         self.tabs = QTabWidget()
@@ -55,14 +55,14 @@ class MainWindow(QMainWindow):
         self.label = LabelPage(self)
         self.model = ModelPage(self)
         self.board_page = BoardPage(self)
-        self.tabs.addTab(self.capture, "1. Съёмка")
-        self.tabs.addTab(self.label, "2. Разметка")
-        self.tabs.addTab(self.model, "3. Модель")
-        self.tabs.addTab(self.board_page, "4. Плата")
+        self.tabs.addTab(self.capture, "1. Capture")
+        self.tabs.addTab(self.label, "2. Label")
+        self.tabs.addTab(self.model, "3. Model")
+        self.tabs.addTab(self.board_page, "4. Board")
         self.setCentralWidget(self.tabs)
-        self.statusBar().showMessage("готово")
+        self.statusBar().showMessage("ready")
 
-    # ---------- общий доступ ----------
+    # ---------- shared access ----------
 
     def board(self) -> Board:
         return Board(
@@ -79,7 +79,7 @@ class MainWindow(QMainWindow):
         self.capture._update_dataset_ui()
         self.label.refresh()
         self.model.refresh()
-        self.statusBar().showMessage(f"датасет: {ds.root}")
+        self.statusBar().showMessage(f"dataset: {ds.root}")
 
     def notify_dataset_changed(self) -> None:
         if self.dataset is not None:
@@ -92,17 +92,17 @@ class MainWindow(QMainWindow):
         self.board_page.set_model_file(model_path)
         self.tabs.setCurrentWidget(self.board_page)
 
-    # ---------- меню ----------
+    # ---------- menu ----------
 
     def _open_dataset(self) -> None:
         initial = str(self.config.get("dataset_root"))
-        path = QFileDialog.getExistingDirectory(self, "Открыть датасет", initial)
+        path = QFileDialog.getExistingDirectory(self, "Open dataset", initial)
         if not path:
             return
         try:
             ds = Dataset(path)
         except Exception as exc:  # noqa: BLE001
-            QMessageBox.critical(self, "Это не датасет", str(exc))
+            QMessageBox.critical(self, "Not a dataset", str(exc))
             return
         self.set_dataset(ds)
 
@@ -111,7 +111,7 @@ class MainWindow(QMainWindow):
         if dialog.exec():
             self.capture.refresh()
             self.model.refresh()
-            self.statusBar().showMessage("настройки сохранены")
+            self.statusBar().showMessage("settings saved")
 
     def _load_last(self) -> None:
         last = str(self.config.get("last_dataset") or "")

@@ -1,4 +1,4 @@
-"""Страница разметки: рамки мышью и трекинг оптическим потоком."""
+"""Labeling page: draw boxes with the mouse and track them with optical flow."""
 
 from __future__ import annotations
 
@@ -44,7 +44,7 @@ class LabelPage(QWidget):
         root = QHBoxLayout(self)
 
         left = QVBoxLayout()
-        left.addWidget(QLabel("Кадры (✓ — размечен)"))
+        left.addWidget(QLabel("Frames (✓ — labeled)"))
         self.list = QListWidget()
         self.list.setMinimumWidth(230)
         self.list.currentRowChanged.connect(self._row_changed)
@@ -63,59 +63,59 @@ class LabelPage(QWidget):
         center.addWidget(self.view, 1)
 
         nav = QHBoxLayout()
-        btn_prev = QPushButton("← Предыдущий")
+        btn_prev = QPushButton("← Previous")
         btn_prev.clicked.connect(self._prev_image)
-        btn_next = QPushButton("Следующий →")
+        btn_next = QPushButton("Next →")
         btn_next.clicked.connect(self._next_image)
         nav.addWidget(btn_prev)
         nav.addWidget(btn_next)
         nav.addStretch(1)
-        self.hint = QLabel("Нарисуйте рамку мышью. Delete — удалить выбранную.")
+        self.hint = QLabel("Draw a box with the mouse. Delete removes the selected one.")
         nav.addWidget(self.hint)
         center.addLayout(nav)
         root.addLayout(center, 1)
 
         right = QVBoxLayout()
-        box = QGroupBox("Разметка")
+        box = QGroupBox("Labeling")
         bl = QVBoxLayout(box)
-        bl.addWidget(QLabel("Класс рамки:"))
+        bl.addWidget(QLabel("Box class:"))
         self.cls_combo = QComboBox()
         self.cls_combo.setToolTip(
-            "Класс новых рамок. Чтобы изменить класс уже нарисованной рамки, "
-            "выберите её и смените класс в списке.")
+            "Class for new boxes. To change the class of an existing box, "
+            "select it and change the class in the list.")
         self.cls_combo.currentIndexChanged.connect(self._class_changed)
         bl.addWidget(self.cls_combo)
         self.cls_label = QLabel("")
         bl.addWidget(self.cls_label)
 
-        self.btn_save = QPushButton("Сохранить рамки")
+        self.btn_save = QPushButton("Save boxes")
         self.btn_save.clicked.connect(self._save_current)
         bl.addWidget(self.btn_save)
 
-        self.btn_track = QPushButton("Трекинг вперёд →")
+        self.btn_track = QPushButton("Track forward →")
         self.btn_track.setToolTip(
-            "Перенести рамки на следующие кадры оптическим потоком и сохранить")
+            "Propagate boxes to the following frames using optical flow and save")
         self.btn_track.clicked.connect(self._track_forward)
         bl.addWidget(self.btn_track)
 
-        self.btn_clear = QPushButton("Очистить рамки")
+        self.btn_clear = QPushButton("Clear boxes")
         self.btn_clear.clicked.connect(self._clear_boxes)
         bl.addWidget(self.btn_clear)
 
-        self.btn_delete = QPushButton("Удалить кадр")
+        self.btn_delete = QPushButton("Delete frame")
         self.btn_delete.clicked.connect(self._delete_image)
         bl.addWidget(self.btn_delete)
 
         bl.addStretch(1)
-        self.box_info = QLabel("рамок: 0")
+        self.box_info = QLabel("boxes: 0")
         bl.addWidget(self.box_info)
         right.addWidget(box)
         root.addLayout(right)
 
-    # ---------- список ----------
+    # ---------- list ----------
 
     def refresh(self) -> None:
-        """Перечитывает список кадров, сохраняя текущий кадр и несохранённые рамки."""
+        """Re-reads the frame list while keeping the current frame and unsaved boxes."""
         ds = self.dataset
         old_img = self._current_img
         old_dirty = self._dirty
@@ -182,7 +182,7 @@ class LabelPage(QWidget):
         self.cls_combo.setCurrentIndex(current)
         self.cls_combo.blockSignals(False)
         self.view.set_new_class(current)
-        self.cls_label.setText(f"классов в датасете: {len(names)}")
+        self.cls_label.setText(f"classes in dataset: {len(names)}")
 
     def _class_changed(self, index: int) -> None:
         if index < 0:
@@ -192,7 +192,7 @@ class LabelPage(QWidget):
             self._boxes[self._selected_box].cls = index
             self.view.set_box_class(self._selected_box, index)
             self._dirty = True
-            self.hint.setText(f"класс рамки: {self.cls_combo.currentText()}")
+            self.hint.setText(f"box class: {self.cls_combo.currentText()}")
 
     def _box_selected(self, index: int) -> None:
         self._selected_box = index
@@ -207,13 +207,13 @@ class LabelPage(QWidget):
     def _update_stats(self) -> None:
         ds = self.dataset
         if ds is None:
-            self.stats.setText("датасет не выбран")
+            self.stats.setText("no dataset selected")
             return
         st = ds.stats()
         self.stats.setText(
-            f"кадров: {st['images']}\nразмечено: {st['labeled']}\n"
-            f"без разметки: {st['unlabeled']}\nрамок: {st['boxes']}")
-        self.box_info.setText(f"рамок на кадре: {len(self._boxes)}")
+            f"frames: {st['images']}\nlabeled: {st['labeled']}\n"
+            f"unlabeled: {st['unlabeled']}\nboxes: {st['boxes']}")
+        self.box_info.setText(f"boxes on frame: {len(self._boxes)}")
 
     def showEvent(self, event) -> None:
         self.refresh()
@@ -224,7 +224,7 @@ class LabelPage(QWidget):
             self._save_current(silent=True)
         super().hideEvent(event)
 
-    # ---------- навигация ----------
+    # ---------- navigation ----------
 
     def _row_changed(self, row: int) -> None:
         if self._loading:
@@ -243,7 +243,7 @@ class LabelPage(QWidget):
         ds = self.dataset
         frame = imread(img)
         if ds is None or frame is None:
-            self.hint.setText(f"не читается {img.name}")
+            self.hint.setText(f"cannot read {img.name}")
             return
         ih, iw = frame.shape[:2]
         self._current_img = img
@@ -255,7 +255,7 @@ class LabelPage(QWidget):
         self.view.set_boxes(self._boxes, self._class_names())
         self.view.set_new_class(self.cls_combo.currentIndex())
         self.hint.setText(f"{img.name} · {iw}×{ih} · "
-                          "нарисуйте рамку мышью, Delete — удалить")
+                          "draw a box with the mouse, Delete removes it")
         self._update_stats()
 
     def _prev_image(self) -> None:
@@ -268,7 +268,7 @@ class LabelPage(QWidget):
         if row < len(self._images) - 1:
             self.list.setCurrentRow(row + 1)
 
-    # ---------- рамки ----------
+    # ---------- boxes ----------
 
     def _box_added(self, box: Box) -> None:
         box.cls = self.cls_combo.currentIndex()
@@ -300,7 +300,7 @@ class LabelPage(QWidget):
         try:
             ds.save_label(self._current_img, self._boxes, self._size)
         except Exception as exc:  # noqa: BLE001
-            QMessageBox.critical(self, "Ошибка сохранения", str(exc))
+            QMessageBox.critical(self, "Save error", str(exc))
             return
         self._dirty = False
         if 0 <= self._current_row < self.list.count():
@@ -311,7 +311,7 @@ class LabelPage(QWidget):
                              if self._boxes else f"✓ {img.name}")
                 item.setForeground(QColor("#31d17c"))
         if not silent:
-            self.hint.setText("разметка сохранена")
+            self.hint.setText("labels saved")
         self._update_stats()
 
     def _delete_image(self) -> None:
@@ -319,7 +319,7 @@ class LabelPage(QWidget):
         img = self._current_img
         if ds is None or img is None:
             return
-        if QMessageBox.question(self, "Удалить кадр", f"Удалить {img.name}?") \
+        if QMessageBox.question(self, "Delete frame", f"Delete {img.name}?") \
                 != QMessageBox.StandardButton.Yes:
             return
         row = self._current_row
@@ -330,22 +330,22 @@ class LabelPage(QWidget):
         if self._images:
             self.list.setCurrentRow(min(max(0, row), len(self._images) - 1))
 
-    # ---------- трекинг ----------
+    # ---------- tracking ----------
 
     def _track_forward(self) -> None:
         ds = self.dataset
         if ds is None or self._current_img is None:
             return
         if not self._boxes:
-            QMessageBox.information(self, "Нет рамок",
-                                    "Сначала нарисуйте рамку на текущем кадре.")
+            QMessageBox.information(self, "No boxes",
+                                    "Draw a box on the current frame first.")
             return
         self._save_current(silent=True)
 
         row = self._current_row
         last = len(self._images) - 1
         if row >= last:
-            self.hint.setText("это последний кадр")
+            self.hint.setText("this is the last frame")
             return
 
         prev_frame = imread(self._current_img)
@@ -354,7 +354,7 @@ class LabelPage(QWidget):
         prev_gray = cv2.cvtColor(prev_frame, cv2.COLOR_BGR2GRAY)
         boxes = list(self._boxes)
 
-        progress = QProgressDialog("Трекинг рамок…", "Отмена", row, last, self)
+        progress = QProgressDialog("Tracking boxes…", "Cancel", row, last, self)
         progress.setWindowModality(Qt.WindowModality.WindowModal)
         progress.setMinimumDuration(300)
         progress.setValue(row)
@@ -371,23 +371,23 @@ class LabelPage(QWidget):
             ih, iw = frame.shape[:2]
             if (iw, ih) != self._size:
                 QMessageBox.warning(
-                    self, "Другой размер",
-                    f"{img.name}: {iw}×{ih}, ожидался {self._size[0]}×{self._size[1]}.\n"
-                    "Трекинг остановлен.")
+                    self, "Size mismatch",
+                    f"{img.name}: {iw}×{ih}, expected {self._size[0]}×{self._size[1]}.\n"
+                    "Tracking stopped.")
                 break
             gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
             boxes, quality = track_boxes(prev_gray, gray, boxes)
             lost = lost + 1 if max(quality) <= 0.05 else 0
             if lost >= 3:
                 QMessageBox.warning(
-                    self, "Трекинг потерян",
-                    "Объект потерян на трёх кадрах подряд.\n"
-                    "Разметьте кадр вручную и продолжите.")
+                    self, "Tracking lost",
+                    "Object lost for three consecutive frames.\n"
+                    "Label the frame manually and continue.")
                 break
             try:
                 ds.save_label(img, boxes, (iw, ih))
             except Exception as exc:  # noqa: BLE001
-                QMessageBox.critical(self, "Ошибка", str(exc))
+                QMessageBox.critical(self, "Error", str(exc))
                 break
             prev_gray = gray
             processed = i
@@ -399,4 +399,4 @@ class LabelPage(QWidget):
         self.refresh()
         if processed > row:
             self.list.setCurrentRow(processed)
-            self.hint.setText(f"трекинг: размечено кадров {processed - row}")
+            self.hint.setText(f"tracking: labeled {processed - row} frames")

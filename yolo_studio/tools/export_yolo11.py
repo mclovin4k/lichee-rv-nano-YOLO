@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Экспорт .pt (YOLOv8/v11) в ONNX с шестью «сырыми» выходами головы.
+"""Export .pt (YOLOv8/v11) to ONNX with six "raw" head outputs.
 
-forward головы заменяется на возврат ветвей box/cls для трёх масштабов:
+The head's forward pass is replaced with one that returns the box/cls branches
+for three scales:
   [box8, box16, box32, cls8, cls16, cls32]
-— ровно этот формат декодирует yolo8.c на плате (без concat/DFL/NMS).
+— this is exactly the format decoded by yolo8.c on the board (no concat/DFL/NMS).
 
 usage: export_yolo11.py <best.pt> [imgsz=640]
 """

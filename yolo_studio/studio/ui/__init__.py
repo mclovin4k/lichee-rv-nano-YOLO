@@ -1,1 +1,1 @@
-"""Интерфейс Lichee YOLO Studio."""
+"""Lichee YOLO Studio UI."""

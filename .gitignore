@@ -4,6 +4,12 @@
 **/.deps/
 **/.venv/
 **/venv/
+out/
+
+# Release binaries: CI builds and publishes them; do not commit huge files.
+yolo_stream/dist/board/stream_yolo
+yolo_face/dist/board/face_stream
+yolo_studio/dist/
 
 # Local archives / kernel modules / logs
 *.tar.gz

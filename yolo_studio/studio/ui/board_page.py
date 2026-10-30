@@ -1,4 +1,4 @@
-"""Страница платы: проверка, заливка модели, запуск потока."""
+"""Board page: connection check, model upload, stream start."""
 
 from __future__ import annotations
 
@@ -29,60 +29,60 @@ class BoardPage(QWidget):
         root = QHBoxLayout(self)
         left = QVBoxLayout()
 
-        conn = QGroupBox("Плата")
+        conn = QGroupBox("Board")
         form = QFormLayout(conn)
         self.ip = QLineEdit(str(self.cfg.get("board_ip")))
         form.addRow("IP:", self.ip)
         self.user = QLineEdit(str(self.cfg.get("board_user")))
-        form.addRow("Пользователь:", self.user)
+        form.addRow("User:", self.user)
         self.password = QLineEdit(str(self.cfg.get("board_password")))
         self.password.setEchoMode(QLineEdit.EchoMode.Password)
-        form.addRow("Пароль:", self.password)
+        form.addRow("Password:", self.password)
         self.stream_port = QSpinBox()
         self.stream_port.setRange(1, 65535)
         self.stream_port.setValue(int(self.cfg.get("stream_port", 7777)))
-        form.addRow("Порт потока:", self.stream_port)
+        form.addRow("Stream port:", self.stream_port)
         for w in (self.ip, self.user, self.password):
             w.editingFinished.connect(self._save_fields)
         self.stream_port.valueChanged.connect(self._save_fields)
         row = QHBoxLayout()
-        self.btn_check = QPushButton("Проверить связь")
+        self.btn_check = QPushButton("Check connection")
         self.btn_check.clicked.connect(self._check)
         row.addWidget(self.btn_check)
-        btn_refresh = QPushButton("Обновить модели")
+        btn_refresh = QPushButton("Refresh models")
         btn_refresh.clicked.connect(self._refresh_models)
         row.addWidget(btn_refresh)
         form.addRow(row)
-        self.status = QLabel("нажмите «Проверить связь»")
+        self.status = QLabel("click “Check connection”")
         self.status.setWordWrap(True)
         form.addRow(self.status)
         left.addWidget(conn)
 
-        models = QGroupBox("Модели на плате")
+        models = QGroupBox("Models on board")
         ml = QVBoxLayout(models)
         self.models = QListWidget()
         self.models.setMinimumHeight(140)
         ml.addWidget(self.models)
-        hint = QLabel("start_stream.sh сканирует /root/models — залитая модель "
-                      "сама появится в меню.")
+        hint = QLabel("start_stream.sh scans /root/models — an uploaded model "
+                      "appears in the menu automatically.")
         hint.setWordWrap(True)
         hint.setStyleSheet("color: #6b7280;")
         ml.addWidget(hint)
         row2 = QHBoxLayout()
-        self.btn_run = QPushButton("Запустить выбранную")
+        self.btn_run = QPushButton("Start selected")
         self.btn_run.clicked.connect(self._run_selected)
         row2.addWidget(self.btn_run)
-        self.btn_auto = QPushButton("Вернуть auto-поток")
+        self.btn_auto = QPushButton("Restore auto stream")
         self.btn_auto.clicked.connect(self._run_auto)
         row2.addWidget(self.btn_auto)
         ml.addLayout(row2)
         left.addWidget(models)
 
-        upload = QGroupBox("Залить модель")
+        upload = QGroupBox("Upload model")
         ul = QVBoxLayout(upload)
         file_row = QHBoxLayout()
         self.file_edit = QLineEdit()
-        self.file_edit.setPlaceholderText("путь к .cvimodel")
+        self.file_edit.setPlaceholderText("path to .cvimodel")
         file_row.addWidget(self.file_edit, 1)
         btn_file = QPushButton("…")
         btn_file.setFixedWidth(36)
@@ -90,13 +90,13 @@ class BoardPage(QWidget):
         file_row.addWidget(btn_file)
         ul.addLayout(file_row)
         name_row = QHBoxLayout()
-        name_row.addWidget(QLabel("имя на плате:"))
+        name_row.addWidget(QLabel("name on board:"))
         self.remote_name = QLineEdit()
         name_row.addWidget(self.remote_name, 1)
         ul.addLayout(name_row)
-        self.overwrite = QCheckBox("перезаписать, если уже есть")
+        self.overwrite = QCheckBox("overwrite if it already exists")
         ul.addWidget(self.overwrite)
-        self.btn_upload = QPushButton("Залить на плату")
+        self.btn_upload = QPushButton("Upload to board")
         self.btn_upload.clicked.connect(self._upload)
         ul.addWidget(self.btn_upload)
         left.addWidget(upload)
@@ -109,9 +109,9 @@ class BoardPage(QWidget):
 
         right = QVBoxLayout()
         head = QHBoxLayout()
-        head.addWidget(QLabel("Лог"))
+        head.addWidget(QLabel("Log"))
         head.addStretch(1)
-        btn_clear = QPushButton("Очистить")
+        btn_clear = QPushButton("Clear")
         btn_clear.clicked.connect(lambda: self.log.clear())
         head.addWidget(btn_clear)
         right.addLayout(head)
@@ -119,7 +119,7 @@ class BoardPage(QWidget):
         right.addWidget(self.log, 1)
         root.addLayout(right, 1)
 
-    # ---------- поля ----------
+    # ---------- fields ----------
 
     def _save_fields(self) -> None:
         self.cfg["board_ip"] = self.ip.text().strip()
@@ -138,7 +138,7 @@ class BoardPage(QWidget):
         self.file_edit.setText(str(path))
         self.remote_name.setText(Path(path).name)
 
-    # ---------- действия ----------
+    # ---------- actions ----------
 
     def _check(self) -> None:
         board = self._board()
@@ -150,16 +150,16 @@ class BoardPage(QWidget):
                 int(self.cfg.get("capture_port", 7778)), timeout=2)
             return info
 
-        self._run(task, self._check_done, "Проверка не удалась")
+        self._run(task, self._check_done, "Connection check failed")
 
     def _check_done(self, info: dict) -> None:
-        yolo = info.get("stream_yolo") or "не запущен"
-        http = "ок" if info.get("http") else "нет ответа"
-        cap = "ок" if info.get("capture") else "нет"
-        text = (f"SSH: ок · {info.get('uname', '')}\n"
+        yolo = info.get("stream_yolo") or "not running"
+        http = "ok" if info.get("http") else "no response"
+        cap = "ok" if info.get("capture") else "down"
+        text = (f"SSH: ok · {info.get('uname', '')}\n"
                 f"stream_yolo: {yolo}\n"
-                f"поток :{self.stream_port.value()}: {http} · "
-                f"съёмочный :{self.cfg.get('capture_port')}: {cap}\n"
+                f"stream :{self.stream_port.value()}: {http} · "
+                f"capture :{self.cfg.get('capture_port')}: {cap}\n"
                 f"{info.get('uptime', '')}")
         self.status.setText(text)
         self.log.append_line(text)
@@ -170,7 +170,7 @@ class BoardPage(QWidget):
         def task(cancel=None, on_line=None):
             return board.list_models()
 
-        self._run(task, self._models_done, "Не удалось получить список")
+        self._run(task, self._models_done, "Failed to get the model list")
 
     def _models_done(self, names: list[str]) -> None:
         current = self.models.currentItem()
@@ -180,12 +180,12 @@ class BoardPage(QWidget):
             self.models.addItem(n)
             if n == keep:
                 self.models.setCurrentRow(self.models.count() - 1)
-        self.status.setText(f"моделей на плате: {len(names)}")
-        self.log.append_line("модели: " + ", ".join(names))
+        self.status.setText(f"models on board: {len(names)}")
+        self.log.append_line("models: " + ", ".join(names))
 
     def _pick_file(self) -> None:
         path, _ = QFileDialog.getOpenFileName(
-            self, "Выберите cvimodel", "", "cvimodel (*.cvimodel)")
+            self, "Select cvimodel", "", "cvimodel (*.cvimodel)")
         if path:
             self.file_edit.setText(path)
             self.remote_name.setText(Path(path).name)
@@ -193,7 +193,7 @@ class BoardPage(QWidget):
     def _upload(self) -> None:
         local = self.file_edit.text().strip()
         if not local or not Path(local).is_file():
-            QMessageBox.information(self, "Нет файла", "Выберите .cvimodel.")
+            QMessageBox.information(self, "No file", "Select a .cvimodel file.")
             return
         board = self._board()
         name = self.remote_name.text().strip() or Path(local).name
@@ -203,11 +203,11 @@ class BoardPage(QWidget):
             remote = board.upload_model(local, name, overwrite=overwrite)
             return remote, board.list_models()
 
-        self._run(task, self._upload_done, "Заливка не удалась")
+        self._run(task, self._upload_done, "Upload failed")
 
     def _upload_done(self, result) -> None:
         remote, names = result
-        self.log.append_line(f"залито: {remote}")
+        self.log.append_line(f"uploaded: {remote}")
         self.models.clear()
         for n in names:
             self.models.addItem(n)
@@ -216,20 +216,20 @@ class BoardPage(QWidget):
             if self.models.item(i).text() == target:
                 self.models.setCurrentRow(i)
                 break
-        self.status.setText(f"залито: {remote}. Модель появится в конце меню "
-                            "start_stream.sh.")
+        self.status.setText(f"uploaded: {remote}. The model will appear at the end of "
+                            "the start_stream.sh menu.")
 
     def _run_selected(self) -> None:
         item = self.models.currentItem()
         if item is None:
-            QMessageBox.information(self, "Модель не выбрана",
-                                    "Выберите модель из списка.")
+            QMessageBox.information(self, "No model selected",
+                                    "Select a model from the list.")
             return
         name = item.text()
         if QMessageBox.question(
-                self, "Запустить модель",
-                f"Поток на плате будет перезапущен с моделью\n{name}.\n"
-                "Текущая съёмка будет остановлена. Продолжить?") \
+                self, "Start model",
+                f"The board stream will be restarted with model\n{name}.\n"
+                "Current capture will be stopped. Continue?") \
                 != QMessageBox.StandardButton.Yes:
             return
         board = self._board()
@@ -240,7 +240,7 @@ class BoardPage(QWidget):
             ok = board.wait_http(board.stream_port, timeout=40)
             return out, ok, board.tail("/root/log/stream.log", 8)
 
-        self._run(task, self._run_done, "Не удалось запустить модель")
+        self._run(task, self._run_done, "Failed to start model")
 
     def _run_done(self, result) -> None:
         out, ok, tail = result
@@ -248,9 +248,9 @@ class BoardPage(QWidget):
         if tail:
             self.log.append_line("--- stream.log ---\n" + tail)
         if ok:
-            self.status.setText(f"поток запущен: {self._board().stream_url()}")
+            self.status.setText(f"stream started: {self._board().stream_url()}")
         else:
-            self.status.setText("модель запущена, но поток не ответил — смотрите лог")
+            self.status.setText("model started, but the stream did not respond — check the log")
 
     def _run_auto(self) -> None:
         board = self._board()
@@ -261,15 +261,15 @@ class BoardPage(QWidget):
             ok = board.wait_http(board.stream_port, timeout=40)
             return ok, board.tail("/root/log/stream.log", 8)
 
-        self._run(task, self._auto_done, "Не удалось вернуть поток")
+        self._run(task, self._auto_done, "Failed to restore the stream")
 
     def _auto_done(self, result) -> None:
         ok, tail = result
         if tail:
             self.log.append_line("--- stream.log ---\n" + tail)
-        self.status.setText("обычный поток запущен" if ok else "поток не ответил")
+        self.status.setText("normal stream started" if ok else "stream did not respond")
 
-    # ---------- фон ----------
+    # ---------- background ----------
 
     def _run(self, fn, on_done, error_title: str) -> None:
         if self._worker is not None:
@@ -281,11 +281,11 @@ class BoardPage(QWidget):
             try:
                 on_done(res)
             except Exception as exc:  # noqa: BLE001
-                QMessageBox.critical(self, "Ошибка", str(exc))
+                QMessageBox.critical(self, "Error", str(exc))
             self._cleanup()
 
         def failed(msg: str) -> None:
-            self.log.append_line("ОШИБКА: " + msg)
+            self.log.append_line("ERROR: " + msg)
             QMessageBox.critical(self, error_title, msg)
             self._cleanup()
 

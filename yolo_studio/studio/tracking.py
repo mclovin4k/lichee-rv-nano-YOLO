@@ -1,4 +1,4 @@
-"""Трекинг рамки между кадрами оптическим потоком (без opencv-contrib)."""
+"""Track a box between frames using optical flow (no opencv-contrib)."""
 
 from __future__ import annotations
 
@@ -10,10 +10,10 @@ from .dataset import Box
 
 def track_box(prev_gray: np.ndarray, gray: np.ndarray, box: Box,
               max_points: int = 40) -> tuple[Box | None, float]:
-    """Возвращает новую рамку и качество трекинга (0..1).
+    """Returns the new box and tracking quality (0..1).
 
-    Качество — доля удержанных точек. None — объект потерян (мало точек,
-    слишком большой скачок): вызывающий код оставляет прежнюю рамку.
+    Quality is the fraction of retained points. None means the object is lost
+    (too few points, too large a jump): the caller keeps the previous box.
     """
     ih, iw = prev_gray.shape[:2]
     h, w = gray.shape[:2]
@@ -60,7 +60,7 @@ def track_box(prev_gray: np.ndarray, gray: np.ndarray, box: Box,
 
     dx, dy = float(np.median(delta[:, 0])), float(np.median(delta[:, 1]))
 
-    # масштаб: по разбросу удержанных точек (устойчивее площади рамки)
+    # scale: from the spread of retained points (more stable than box area)
     spread0 = max(float(np.ptp(pts0[:, 0])), float(np.ptp(pts0[:, 1])), 1.0)
     spread1 = max(float(np.ptp(pts1[:, 0])), float(np.ptp(pts1[:, 1])), 1.0)
     scale = spread1 / spread0
@@ -76,7 +76,7 @@ def track_box(prev_gray: np.ndarray, gray: np.ndarray, box: Box,
 
 def track_boxes(prev_gray: np.ndarray, gray: np.ndarray,
                 boxes: list[Box]) -> tuple[list[Box], list[float]]:
-    """Трекает список рамок; потерянные остаются на месте с quality=0."""
+    """Tracks a list of boxes; lost ones stay in place with quality=0."""
     out: list[Box] = []
     quality: list[float] = []
     for b in boxes:

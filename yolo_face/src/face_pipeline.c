@@ -1,5 +1,5 @@
-/* Распознавание лиц на cv181x через TDL SDK (SCRFD + cviface + RGB liveness).
-   Галерея: <faces_dir>/<имя>/feature.bin  (заголовок "CVF1", uint32 dim, float[dim]). */
+/* Face recognition on cv181x via the TDL SDK (SCRFD + cviface + RGB liveness).
+   Gallery: <faces_dir>/<name>/feature.bin  (header "CVF1", uint32 dim, float[dim]). */
 #include "face_pipeline.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -20,9 +20,10 @@
 #define MAX_PEOPLE 64
 #define MAX_DIM 1024
 
-/* TDL грузим через dlopen: libcvi_tdl.so собрана с shared OpenCV 3.2, а
-   приложение — со статическим OpenCV 4.13 (CVI-бэкенд камеры). Прямая
-   линковка тянет скрытые символы статической сборки в DSO и падает. */
+/* TDL is loaded via dlopen: libcvi_tdl.so is built with shared OpenCV 3.2,
+   while the application uses static OpenCV 4.13 (the camera CVI backend).
+   Direct linking pulls hidden symbols of the static build into the DSO and
+   crashes. */
 typedef CVI_S32 (*tdl_create2_t)(cvitdl_handle_t *, const VPSS_GRP, const CVI_U8);
 typedef CVI_S32 (*tdl_open_t)(cvitdl_handle_t, CVI_TDL_SUPPORTED_MODEL_E, const char *);
 typedef CVI_S32 (*tdl_thr_t)(cvitdl_handle_t, CVI_TDL_SUPPORTED_MODEL_E, float);
@@ -51,11 +52,11 @@ static tdl_vbpool_t p_set_vbpool = NULL;
 static tdl_timeout_t p_set_timeout = NULL;
 static VB_POOL g_tdl_pool = VB_INVALID_POOLID;
 
-/* libvpu поднимаем в глобальную область до libcvi_tdl.so: TDL использует
-   GDC-символы, которых нет в NEEDED.  В поставке рядом лежит патченная
-   middleware-сборка libvpu_tdl.so; VPSS при этом продолжает работать с
-   системной libvpu.so.  Путь можно переопределить через SY_VPU_LIB.
-   RTLD_LAZY: у libvpu есть необязательные ISP-зависимости. */
+/* Load libvpu into the global scope before libcvi_tdl.so: TDL uses GDC symbols
+   that are missing from NEEDED.  The distribution ships a patched middleware
+   build of libvpu_tdl.so alongside; VPSS keeps using the system libvpu.so.
+   The path can be overridden via SY_VPU_LIB.
+   RTLD_LAZY: libvpu has optional ISP dependencies. */
 static void vpu_preload(void) {
     const char *env = getenv("SY_VPU_LIB");
     if (env != NULL && env[0] != '\0' &&
@@ -78,31 +79,31 @@ static int tdl_load(void) {
         g_tdl_lib = dlopen("libcvi_tdl.so", RTLD_LAZY | RTLD_GLOBAL);
     }
     if (g_tdl_lib == NULL) {
-        printf("faces: не смог загрузить libcvi_tdl.so: %s\n", dlerror());
+        printf("faces: failed to load libcvi_tdl.so: %s\n", dlerror());
         return -1;
     }
 #define TDL_SYM(var, name)                                  \
     do {                                                    \
         *(void **)(&var) = dlsym(g_tdl_lib, name);          \
         if (var == NULL) {                                  \
-            printf("faces: в libcvi_tdl.so нет %s\n", name); \
+            printf("faces: libcvi_tdl.so has no %s\n", name); \
             return -1;                                      \
         }                                                   \
     } while (0)
     TDL_SYM(p_create2, "CVI_TDL_CreateHandle2");
     TDL_SYM(p_open, "CVI_TDL_OpenModel");
     TDL_SYM(p_set_thr, "CVI_TDL_SetModelThreshold");
-    /* Две сборки TDL: старая (ScrFDFace) и новая (FaceDetection). */
+    /* Two TDL builds: old (ScrFDFace) and new (FaceDetection). */
     *(void **)(&p_scrfd) = dlsym(g_tdl_lib, "CVI_TDL_ScrFDFace");
     if (p_scrfd == NULL) TDL_SYM(p_det, "CVI_TDL_FaceDetection");
     TDL_SYM(p_rec, "CVI_TDL_FaceRecognition");
-    *(void **)(&p_live) = dlsym(g_tdl_lib, "CVI_TDL_Liveness"); /* может отсутствовать */
+    *(void **)(&p_live) = dlsym(g_tdl_lib, "CVI_TDL_Liveness"); /* may be absent */
     TDL_SYM(p_free_face, "CVI_TDL_FreeFace");
     TDL_SYM(p_destroy, "CVI_TDL_DestroyHandle");
     *(void **)(&p_set_vbpool) = dlsym(g_tdl_lib, "CVI_TDL_SetVBPool");
     *(void **)(&p_set_timeout) = dlsym(g_tdl_lib, "CVI_TDL_SetVpssTimeout");
 #undef TDL_SYM
-    printf("faces: TDL %s загружен\n", path);
+    printf("faces: TDL %s loaded\n", path);
     fflush(stdout);
     return 0;
 }
@@ -118,10 +119,10 @@ static person_t g_people[MAX_PEOPLE];
 static int g_npeople = 0;
 static char g_dir[256] = "/root/faces";
 static float g_match_thr = 0.40f;
-static float g_live_thr = -1.0f;   /* <0 — liveness не проверяем */
+static float g_live_thr = -1.0f;   /* <0 — liveness is not checked */
 static int g_live_on = 0;
 
-/* Параметры инициализации — чтобы пересоздать TDL после зависания TPU. */
+/* Initialization parameters — to recreate TDL after a TPU hang. */
 static VPSS_GRP g_tdl_grp = 0;
 static char g_fd_model[256] = "";
 static char g_fr_model[256] = "";
@@ -145,7 +146,7 @@ static double now_ms(void) {
     return (double)ts.tv_sec * 1000.0 + (double)ts.tv_nsec / 1e6;
 }
 
-/* ---------- имя/пути ---------- */
+/* ---------- name/paths ---------- */
 static int name_ok(const char *s) {
     if (s == NULL || s[0] == '\0' || strlen(s) >= sizeof(((person_t *)0)->name)) return 0;
     if (strstr(s, "..") != NULL) return 0;
@@ -159,43 +160,44 @@ static void person_path(const char *name, char *buf, size_t len) {
     snprintf(buf, len, "%s/%s", g_dir, name);
 }
 
-/* ---------- пассивная проверка живости ---------- */
-/* Человек моргает сам: при моргании веко на 1-2 кадра прикрывает зрачок, и
-   яркость глаза относительно переносицы резко меняется. Смотрим производную
-   «глаз минус переносица» — она слабо зависит от поворота головы и освещения.
-   Фотография не моргает никогда. Порог изменения адаптивный: оцениваем шум
-   кадров, поэтому дрожание фото в руке не превращается в «моргание». Итог
-   проверки не вечен: без новых морганий статус «протухает» (keep), иначе
-   подмена живого лица фотографией наследовала бы зелёную рамку. */
+/* ---------- passive liveness check ---------- */
+/* A person blinks naturally: during a blink the eyelid covers the pupil for
+   1-2 frames, and the eye brightness relative to the nose bridge changes
+   sharply. We look at the derivative of "eye minus nose bridge" — it depends
+   little on head rotation and lighting. A photograph never blinks. The change
+   threshold is adaptive: we estimate frame noise, so a photo shaking in the
+   hand does not turn into a "blink". The check result is not permanent: without
+   new blinks the status "expires" (keep), otherwise replacing a live face with
+   a photo would inherit the green box. */
 #define LIVE_CHECK 0
 #define LIVE_OK 1
 #define LIVE_PHOTO 2
 
 static int g_lv_state = LIVE_CHECK;
 static int g_lv_box[4] = {0, 0, 0, 0};
-static double g_lv_t0 = 0.0;          /* начало текущей проверки */
-static double g_lv_seen_t = 0.0;      /* когда лицо последний раз было в кадре */
-static double g_lv_last_blink = 0.0;  /* время последнего принятого моргания */
-static int g_lv_blinks = 0;           /* морганий в текущей проверке */
+static double g_lv_t0 = 0.0;          /* start of the current check */
+static double g_lv_seen_t = 0.0;      /* when the face was last seen in frame */
+static double g_lv_last_blink = 0.0;  /* time of the last accepted blink */
+static int g_lv_blinks = 0;           /* blinks in the current check */
 static float g_lv_eye_prev[2] = {0.0f, 0.0f};
 static float g_lv_ref_prev = 0.0f;
 static int g_lv_prev_ok = 0;
-static double g_lv_valid_t = 0.0;     /* последний кадр с валидными глазами */
-static double g_lv_update_t = 0.0;    /* прошлое обновление (для dt) */
-static double g_lv_valid_ms = 0.0;    /* накопленное время с валидными глазами */
-static float g_lv_noise = 1.0f;       /* оценка шума |dv| */
-static int g_lv_close = 0;            /* кадров с закрытием глаза */
-static int g_lv_open = 0;             /* было закрытие, ждём открытия */
-static float g_lv_peak = 0.0f;        /* максимум dv в текущем закрытии */
-static char g_lv_msg[160] = "ждём лицо в кадре";
+static double g_lv_valid_t = 0.0;     /* last frame with valid eyes */
+static double g_lv_update_t = 0.0;    /* previous update (for dt) */
+static double g_lv_valid_ms = 0.0;    /* accumulated time with valid eyes */
+static float g_lv_noise = 1.0f;       /* noise estimate |dv| */
+static int g_lv_close = 0;            /* frames with the eye closed */
+static int g_lv_open = 0;             /* a close happened, waiting for an open */
+static float g_lv_peak = 0.0f;        /* max dv in the current close */
+static char g_lv_msg[160] = "waiting for a face";
 static int g_lv_dbg = 0;
 
-/* Тайминги: check — сколько валидных миллисекунд ждать моргания (таймер
-   перезапускается после каждого моргания), keep — сколько живёт подтверждение
-   без новых морганий. */
+/* Timings: check — how many valid milliseconds to wait for a blink (the timer
+   restarts after each blink), keep — how long the confirmation lives without
+   new blinks. */
 static int g_lv_check_ms = 12000;
 static int g_lv_keep_ms = 15000;
-static int g_lv_blinks_need = 1;   /* достаточно одного уверенного моргания */
+static int g_lv_blinks_need = 1;   /* one confident blink is enough */
 
 void face_live_timing(int check_ms, int keep_ms) {
     if (check_ms > 0) g_lv_check_ms = check_ms;
@@ -250,7 +252,7 @@ static void lv_start(int x1, int y1, int x2, int y2) {
     g_lv_box[1] = y1;
     g_lv_box[2] = x2;
     g_lv_box[3] = y2;
-    snprintf(g_lv_msg, sizeof(g_lv_msg), "моргните: проверяю лицо");
+    snprintf(g_lv_msg, sizeof(g_lv_msg), "blink: checking face");
 }
 
 void face_live_update(int x1, int y1, int x2, int y2, float eye_l, float eye_r, float ref,
@@ -262,14 +264,14 @@ void face_live_update(int x1, int y1, int x2, int y2, float eye_l, float eye_r, 
     }
     const double now = now_ms();
 
-    /* лицо пропало из кадра */
+    /* the face left the frame */
     if (x2 <= x1 || y2 <= y1) {
         if (g_lv_state != LIVE_CHECK && now - g_lv_seen_t > 3000.0) {
             g_lv_state = LIVE_CHECK;
             g_lv_blinks = 0;
             g_lv_valid_ms = 0.0;
             lv_clear_prev();
-            snprintf(g_lv_msg, sizeof(g_lv_msg), "ждём лицо в кадре");
+            snprintf(g_lv_msg, sizeof(g_lv_msg), "waiting for a face");
         }
         return;
     }
@@ -277,8 +279,8 @@ void face_live_update(int x1, int y1, int x2, int y2, float eye_l, float eye_r, 
     if (!lv_same_face(x1, y1, x2, y2)) {
         lv_start(x1, y1, x2, y2);
     } else if (g_lv_box[2] > g_lv_box[0]) {
-        /* Плавный дрейф и изменение масштаба не должны сбрасывать проверку:
-           подтягиваем опорную рамку к текущей. */
+        /* Smooth drift and scale changes must not reset the check: pull the
+           reference box toward the current one. */
         g_lv_box[0] = (g_lv_box[0] * 3 + x1 + 2) / 4;
         g_lv_box[1] = (g_lv_box[1] * 3 + y1 + 2) / 4;
         g_lv_box[2] = (g_lv_box[2] * 3 + x2 + 2) / 4;
@@ -286,31 +288,32 @@ void face_live_update(int x1, int y1, int x2, int y2, float eye_l, float eye_r, 
     }
     g_lv_seen_t = now;
 
-    /* Подтверждение не вечно: нет морганий keep мс — снова проверяем. Так
-       фотография, подсунутая вместо живого лица, не наследует зелёную рамку. */
+    /* Confirmation is not permanent: no blinks for keep ms — check again. Thus
+       a photo substituted for a live face does not inherit the green box. */
     if (g_lv_state == LIVE_OK && now - g_lv_last_blink > (double)g_lv_keep_ms) {
         g_lv_state = LIVE_CHECK;
         g_lv_blinks = 0;
         g_lv_valid_ms = 0.0;
         g_lv_t0 = now;
         lv_clear_prev();
-        snprintf(g_lv_msg, sizeof(g_lv_msg), "моргните: подтвердите лицо");
-        printf("live: подтверждение устарело, снова проверяю\n");
+        snprintf(g_lv_msg, sizeof(g_lv_msg), "blink: confirm your face");
+        printf("live: confirmation expired, checking again\n");
         fflush(stdout);
     }
 
     if (!valid || eye_l <= 0.0f || eye_r <= 0.0f || ref <= 0.0f) {
-        /* Глаза не найдены (мелкое лицо, тёмные очки): моргание не проверить,
-           но и обвинять в подделке не за что. Короткие пропуски не сбрасывают
-           историю, иначе шум детектора рвёт проверку. */
+        /* Eyes not found (small face, dark glasses): a blink cannot be checked,
+           but there is no reason to accuse of spoofing either. Short gaps do
+           not reset the history, otherwise detector noise breaks the check. */
         if (now - g_lv_valid_t > 1500.0) lv_clear_prev();
         if (g_lv_state == LIVE_CHECK && g_lv_valid_ms == 0.0 && now - g_lv_t0 > 3000.0)
-            snprintf(g_lv_msg, sizeof(g_lv_msg), "не вижу глаза — подойдите ближе");
+            snprintf(g_lv_msg, sizeof(g_lv_msg), "cannot see the eyes — come closer");
         return;
     }
 
-    /* В проверке копим только время, когда глаза реально видны: иначе «фото»
-       получало бы и живое лицо, которое стоит слишком далеко. */
+    /* During the check, accumulate only time when the eyes are actually
+       visible: otherwise a live face standing too far away would be marked
+       as a "photo". */
     const double dt = (g_lv_update_t > 0.0) ? (now - g_lv_update_t) : 0.0;
     g_lv_update_t = now;
     g_lv_valid_t = now;
@@ -319,8 +322,8 @@ void face_live_update(int x1, int y1, int x2, int y2, float eye_l, float eye_r, 
         if (g_lv_valid_ms >= (double)g_lv_check_ms && !g_lv_open) {
             g_lv_state = LIVE_PHOTO;
             g_lv_blinks = 0;
-            snprintf(g_lv_msg, sizeof(g_lv_msg), "фото: моргания нет");
-            printf("live: фото (моргания нет)\n");
+            snprintf(g_lv_msg, sizeof(g_lv_msg), "photo: no blinking");
+            printf("live: photo (no blinking)\n");
             fflush(stdout);
             return;
         }
@@ -333,9 +336,9 @@ void face_live_update(int x1, int y1, int x2, int y2, float eye_l, float eye_r, 
         g_lv_prev_ok = 1;
         return;
     }
-    /* Изменение глаза относительно переносицы за кадр. Берём среднее по двум
-       глазам (шум одиночного глаза раньше выглядел морганием) и требуем, чтобы
-       закрывались оба века. */
+    /* Change of the eye relative to the nose bridge per frame. Take the average
+       over both eyes (single-eye noise used to look like a blink) and require
+       both eyelids to close. */
     const float dref = ref - g_lv_ref_prev;
     const float dl = (eye_l - g_lv_eye_prev[0]) - dref;
     const float dr = (eye_r - g_lv_eye_prev[1]) - dref;
@@ -344,12 +347,12 @@ void face_live_update(int x1, int y1, int x2, int y2, float eye_l, float eye_r, 
     g_lv_eye_prev[1] = eye_r;
     g_lv_ref_prev = ref;
 
-    /* Порог адаптивный: считаем текущий шум |dv|, чтобы дрожание бумажного
-       фото в руке не превращалось в «моргание». */
-    float thr_c = 3.0f * g_lv_noise + 4.0f;   /* глаз стал ярче (веко закрылось) */
+    /* Adaptive threshold: estimate the current |dv| noise so that a paper photo
+       shaking in the hand does not turn into a "blink". */
+    float thr_c = 3.0f * g_lv_noise + 4.0f;   /* the eye got brighter (eyelid closed) */
     if (thr_c < 6.0f) thr_c = 6.0f;
     if (thr_c > 25.0f) thr_c = 25.0f;
-    float thr_o = 2.0f * g_lv_noise + 3.0f;   /* глаз снова открылся */
+    float thr_o = 2.0f * g_lv_noise + 3.0f;   /* the eye opened again */
     if (thr_o < 4.0f) thr_o = 4.0f;
     if (thr_o > 18.0f) thr_o = 18.0f;
 
@@ -384,29 +387,29 @@ void face_live_update(int x1, int y1, int x2, int y2, float eye_l, float eye_r, 
         g_lv_close++;
         if (dv > g_lv_peak) g_lv_peak = dv;
         if (open_ok && g_lv_close >= 1 && g_lv_close <= 12) {
-            /* закрытие и открытие уложились в ~0.7 с — это моргание */
+            /* close and open within ~0.7 s — this is a blink */
             g_lv_open = 0;
             g_lv_close = 0;
             g_lv_last_blink = now;
             g_lv_valid_ms = 0.0;
             g_lv_blinks++;
             if (g_lv_dbg) {
-                printf("live: dbg моргание #%d (пик %.1f)\n", g_lv_blinks, g_lv_peak);
+                printf("live: dbg blink #%d (peak %.1f)\n", g_lv_blinks, g_lv_peak);
                 fflush(stdout);
             }
             if (g_lv_state == LIVE_OK) {
-                /* уже подтверждено: моргание просто продлевает статус */
-                snprintf(g_lv_msg, sizeof(g_lv_msg), "человек: моргание");
+                /* already confirmed: the blink just extends the status */
+                snprintf(g_lv_msg, sizeof(g_lv_msg), "person: blink");
             } else if (g_lv_blinks >= g_lv_blinks_need) {
                 g_lv_state = LIVE_OK;
-                snprintf(g_lv_msg, sizeof(g_lv_msg), "человек: моргание");
-                printf("live: подтверждено (моргание)\n");
+                snprintf(g_lv_msg, sizeof(g_lv_msg), "person: blink");
+                printf("live: confirmed (blink)\n");
                 fflush(stdout);
             } else {
-                snprintf(g_lv_msg, sizeof(g_lv_msg), "ещё раз моргните");
+                snprintf(g_lv_msg, sizeof(g_lv_msg), "blink again");
             }
         } else if (g_lv_close > 12) {
-            g_lv_open = 0;   /* закрытие без открытия — не моргание */
+            g_lv_open = 0;   /* a close without an open is not a blink */
             g_lv_close = 0;
         }
     }
@@ -429,7 +432,7 @@ void face_liveness_reset(void) {
     g_lv_last_blink = 0.0;
     lv_clear_prev();
     g_lv_box[0] = g_lv_box[1] = g_lv_box[2] = g_lv_box[3] = 0;
-    snprintf(g_lv_msg, sizeof(g_lv_msg), "ждём лицо в кадре");
+    snprintf(g_lv_msg, sizeof(g_lv_msg), "waiting for a face");
 }
 
 int face_liveness_prompt(char *buf, int len) { return snprintf(buf, len, ""); }
@@ -440,7 +443,7 @@ int face_liveness_json(char *buf, int len) {
     return snprintf(buf, len, "{\"state\":\"%s\",\"msg\":\"%s\"}", st[st_i], g_lv_msg);
 }
 
-/* ---------- галерея ---------- */
+/* ---------- gallery ---------- */
 static void feat_normalize(float *v, int dim) {
     double n = 0.0;
     for (int i = 0; i < dim; i++) n += (double)v[i] * v[i];
@@ -483,7 +486,7 @@ int face_gallery_reload(void) {
         g_npeople++;
     }
     closedir(d);
-    printf("faces: галерея %d чел. из %s\n", g_npeople, g_dir);
+    printf("faces: gallery %d people from %s\n", g_npeople, g_dir);
     fflush(stdout);
     return g_npeople;
 }
@@ -520,10 +523,10 @@ int face_delete(const char *name) {
     return 0;
 }
 
-/* ---------- регистрация ---------- */
+/* ---------- enrollment ---------- */
 int face_enroll_begin(const char *name) {
     if (!name_ok(name)) return -1;
-    if (g_en_state == EN_COLLECT) return -2; /* уже идёт */
+    if (g_en_state == EN_COLLECT) return -2; /* already in progress */
 
     snprintf(g_en_name, sizeof(g_en_name), "%s", name);
     g_en_state = EN_COLLECT;
@@ -537,8 +540,8 @@ int face_enroll_begin(const char *name) {
     if (g_en_need < 3) g_en_need = 3;
     if (g_en_need > 40) g_en_need = 40;
     snprintf(g_en_msg, sizeof(g_en_msg),
-             face_liveness_ok() ? "смотрите в камеру" : "проверяю лицо — смотрите в камеру");
-    printf("faces: регистрация «%s», нужно кадров: %d\n", g_en_name, g_en_need);
+             face_liveness_ok() ? "look at the camera" : "checking face — look at the camera");
+    printf("faces: enrollment \"%s\", frames needed: %d\n", g_en_name, g_en_need);
     fflush(stdout);
     return 0;
 }
@@ -547,7 +550,7 @@ int face_enroll_status(char *buf, int len) {
     if (g_en_state == EN_COLLECT && now_ms() - g_en_t0 > 25000.0) {
         g_en_state = EN_ERR;
         snprintf(g_en_msg, sizeof(g_en_msg),
-                 "не удалось: подойдите ближе и моргните");
+                 "failed: come closer and blink");
     }
     const char *st = (g_en_state == EN_COLLECT) ? "collecting"
                      : (g_en_state == EN_DONE) ? "done"
@@ -561,14 +564,14 @@ int face_enroll_status(char *buf, int len) {
     return 0;
 }
 
-/* Сбросить регистрацию (например, если лицо оказалось подделкой). */
+/* Abort enrollment (for example, if the face turned out to be a spoof). */
 void face_enroll_abort(void) {
     if (g_en_state == EN_COLLECT) {
         g_en_state = EN_IDLE;
         g_en_got = 0;
         g_en_name[0] = 0;
-        snprintf(g_en_msg, sizeof(g_en_msg), "регистрация прервана: похоже на фото");
-        printf("faces: регистрация прервана (лицо не меняется — фото?)\n");
+        snprintf(g_en_msg, sizeof(g_en_msg), "enrollment aborted: looks like a photo");
+        printf("faces: enrollment aborted (the face does not change — photo?)\n");
         fflush(stdout);
     }
 }
@@ -581,7 +584,7 @@ int face_enroll_take_preview(char *name, int len) {
 }
 
 static void enroll_finish(void) {
-    /* средний вектор -> L2-норма -> в файл */
+    /* average vector -> L2 norm -> file */
     float avg[MAX_DIM];
     for (int i = 0; i < g_en_dim; i++) avg[i] = g_en_sum[i] / (float)g_en_got;
     feat_normalize(avg, g_en_dim);
@@ -595,7 +598,7 @@ static void enroll_finish(void) {
     FILE *f = fopen(file, "wb");
     if (f == NULL) {
         g_en_state = EN_ERR;
-        snprintf(g_en_msg, sizeof(g_en_msg), "не смог записать %s", file);
+        snprintf(g_en_msg, sizeof(g_en_msg), "could not write %s", file);
         return;
     }
     uint32_t dim = (uint32_t)g_en_dim;
@@ -613,17 +616,17 @@ static void enroll_finish(void) {
     }
     g_en_state = EN_DONE;
     g_en_preview = 1;
-    snprintf(g_en_msg, sizeof(g_en_msg), "готово: %d кадров", g_en_got);
-    printf("faces: «%s» сохранён (%d кадров, dim=%u)\n", g_en_name, g_en_got, dim);
+    snprintf(g_en_msg, sizeof(g_en_msg), "done: %d frames", g_en_got);
+    printf("faces: \"%s\" saved (%d frames, dim=%u)\n", g_en_name, g_en_got, dim);
     fflush(stdout);
     face_gallery_reload();
 }
 
 /* ---------- liveness ---------- */
-/* CVI_TDL_Liveness(handle, rgbFrame, irFrame, rgb_face, ir_face): вторым кадром
-   ожидается ИК-кадр, у нас его нет — передаём NULL (RGB-модель).
-   На этой прошивке вызов умеет зависать на TPU, поэтому делаем его в отдельном
-   потоке со сторожевым таймером: нет ответа за 2 с -> модель отключаем. */
+/* CVI_TDL_Liveness(handle, rgbFrame, irFrame, rgb_face, ir_face): the second
+   frame is expected to be an IR frame, we do not have one — pass NULL (RGB model).
+   On this firmware the call can hang on the TPU, so run it in a separate thread
+   with a watchdog timer: no response within 2 s -> disable the model. */
 typedef struct {
     cvitdl_handle_t h;
     VIDEO_FRAME_INFO_S frame;
@@ -639,7 +642,7 @@ static void *live_thread(void *arg) {
     return NULL;
 }
 
-/* 0 — оценка получена, -2 — модель зависла (отключаем), прочее — ошибка. */
+/* 0 — score received, -2 — model hung (disable it), otherwise — error. */
 static int liveness_score(cvitdl_handle_t h, VIDEO_FRAME_INFO_S *frame, cvtdl_face_t *faces) {
     live_ctx_t *c = (live_ctx_t *)calloc(1, sizeof(live_ctx_t));
     if (c == NULL) return -1;
@@ -665,12 +668,12 @@ static int liveness_score(cvitdl_handle_t h, VIDEO_FRAME_INFO_S *frame, cvtdl_fa
         pthread_join(th, NULL);
         free(c);
     } else {
-        /* Поток завис внутри TDL: ctx не трогаем (утечка осознанная), поток
-           умрёт вместе с процессом. */
+        /* The thread hung inside TDL: do not touch ctx (intentional leak), the
+           thread will die with the process. */
         pthread_detach(th);
         g_live_on = 0;
         g_live_thr = -1.0f;
-        printf("faces: liveness не ответил за 2 с — модель отключена\n");
+        printf("faces: liveness did not respond in 2 s — model disabled\n");
         fflush(stdout);
     }
     return rc;
@@ -678,50 +681,50 @@ static int liveness_score(cvitdl_handle_t h, VIDEO_FRAME_INFO_S *frame, cvtdl_fa
 
 /* ---------- TDL ---------- */
 
-/* Освобождение TDL в отдельном потоке: DestroyHandle/StopGrp могут зависнуть.
-   Порядок важен: сначала останавливаем и уничтожаем VPSS-группу TDL (она же
-   держит наш VB-пул), иначе память ION не возвращается в систему. */
+/* Release TDL in a separate thread: DestroyHandle/StopGrp can hang.
+   Order matters: first stop and destroy the TDL VPSS group (it also holds our
+   VB pool), otherwise ION memory is not returned to the system. */
 static volatile int g_cleanup_done = 0;
 
 static void *tdl_destroy_thread(void *arg) {
     cvitdl_handle_t h = (cvitdl_handle_t)arg;
     const int grp = (int)g_tdl_grp;
-    printf("faces: очистка: стоп группы...\n");
+    printf("faces: cleanup: stopping the group...\n");
     fflush(stdout);
     const int s1 = vpss_face_stop_grp(grp);
-    printf("faces: очистка: DestroyGrp...\n");
+    printf("faces: cleanup: DestroyGrp...\n");
     fflush(stdout);
     const int s2 = vpss_face_destroy_grp(grp);
-    printf("faces: стоп группы rc=0x%x, DestroyGrp(%d) rc=0x%x\n", (unsigned)s1, grp,
+    printf("faces: stop group rc=0x%x, DestroyGrp(%d) rc=0x%x\n", (unsigned)s1, grp,
            (unsigned)s2);
     fflush(stdout);
-    /* Сначала handle: он держит ссылки на блоки пула, и DestroyPool без
-       этого виснет. */
-    printf("faces: очистка: DestroyHandle...\n");
+    /* Handle first: it holds references to pool blocks, and DestroyPool hangs
+       without this. */
+    printf("faces: cleanup: DestroyHandle...\n");
     fflush(stdout);
     p_destroy(h);
-    /* VB-пул не трогаем: DestroyPool виснет, пока на блоках висят ссылки TDL.
-       Пул освободит ядро при выходе процесса. */
-    printf("faces: очистка: готово\n");
+    /* Do not touch the VB pool: DestroyPool hangs while TDL references the
+       blocks. The kernel will free the pool when the process exits. */
+    printf("faces: cleanup: done\n");
     fflush(stdout);
     g_cleanup_done = 1;
     return NULL;
 }
 
-/* Создаёт handle TDL и открывает модели. Отдельно от face_init, чтобы можно
-   было пересоздать TDL после зависания TPU (face_restart). */
+/* Creates a TDL handle and opens the models. Kept separate from face_init so
+   TDL can be recreated after a TPU hang (face_restart). */
 static int tdl_open_handle(void) {
-    /* На этой прошивке группы 0..2 созданы системой: CreateGrp на них даёт
-       0xc0068004 (EXIST) и TDL падает с CVI_TDL_ERR_INIT_VPSS. Поэтому берём
-       первую свободную группу. */
+    /* On this firmware groups 0..2 are created by the system: CreateGrp on
+       them returns 0xc0068004 (EXIST) and TDL fails with
+       CVI_TDL_ERR_INIT_VPSS. Therefore take the first free group. */
     const char *grp_env = getenv("SY_TDL_GRP");
     VPSS_GRP tdl_grp;
     if (grp_env != NULL && atoi(grp_env) > 0) {
         tdl_grp = (VPSS_GRP)atoi(grp_env);
     } else {
-        /* Группы 0..2 на этой прошивке созданы системой (CreateGrp -> EXIST),
-           а группы после аварийных завершений могут остаться занятыми. Поэтому
-           берём первую, которую реально можно создать. */
+        /* Groups 0..2 on this firmware are created by the system
+           (CreateGrp -> EXIST), and groups may stay busy after crashes.
+           Therefore take the first one that can actually be created. */
         int g = 0;
         for (int i = 1; i < 16; i++) {
             if (vpss_face_group_free(i)) {
@@ -732,52 +735,52 @@ static int tdl_open_handle(void) {
         tdl_grp = (g > 0) ? (VPSS_GRP)g : (VPSS_GRP)3;
     }
     g_tdl_grp = tdl_grp;
-    printf("faces: TDL VPSS группа %d\n", (int)tdl_grp);
+    printf("faces: TDL VPSS group %d\n", (int)tdl_grp);
     fflush(stdout);
     if (p_create2(&g_tdl, tdl_grp, 0) != CVI_TDL_SUCCESS) {
-        printf("faces: CVI_TDL_CreateHandle2 не удался\n");
+        printf("faces: CVI_TDL_CreateHandle2 failed\n");
         fflush(stdout);
         return -1;
     }
     if (p_open(g_tdl, CVI_TDL_SUPPORTED_MODEL_SCRFDFACE, g_fd_model) != CVI_SUCCESS) {
-        printf("faces: не открылась модель детекции %s\n", g_fd_model);
+        printf("faces: detection model %s failed to open\n", g_fd_model);
         fflush(stdout);
         return -2;
     }
     if (p_open(g_tdl, CVI_TDL_SUPPORTED_MODEL_FACERECOGNITION, g_fr_model) != CVI_SUCCESS) {
-        printf("faces: не открылась модель распознавания %s\n", g_fr_model);
+        printf("faces: recognition model %s failed to open\n", g_fr_model);
         fflush(stdout);
         return -3;
     }
     if (g_live_model[0] && p_live != NULL) {
-        /* Модель RGB-liveness; ИК-кадра у нас нет — вызов идёт с irFrame=NULL. */
+        /* RGB liveness model; we have no IR frame — the call uses irFrame=NULL. */
         if (p_open(g_tdl, CVI_TDL_SUPPORTED_MODEL_LIVENESS, g_live_model) == CVI_SUCCESS) {
             g_live_on = 1;
         } else {
-            printf("faces: liveness-модель не открылась, проверка фото отключена\n");
+            printf("faces: liveness model failed to open, photo check disabled\n");
         }
     } else if (p_live == NULL) {
-        printf("faces: в этой сборке TDL нет RGB-liveness, проверка фото отключена\n");
+        printf("faces: this TDL build has no RGB liveness, photo check disabled\n");
     }
     p_set_thr(g_tdl, CVI_TDL_SUPPORTED_MODEL_SCRFDFACE, g_det_thr);
-    printf("faces: TDL готов (fd=%s, fr=%s, live=%s, thr=%.2f/%.2f%.2f)\n", g_fd_model, g_fr_model,
+    printf("faces: TDL ready (fd=%s, fr=%s, live=%s, thr=%.2f/%.2f%.2f)\n", g_fd_model, g_fr_model,
            g_live_on ? g_live_model : "off", g_det_thr, g_match_thr, g_live_thr);
     fflush(stdout);
     return 0;
 }
 
-/* VB-пул, на котором TDL делает свою препроцессинг-преобразование. */
+/* VB pool on which TDL performs its preprocessing conversion. */
 static int tdl_pool_create(void) {
     VB_POOL_CONFIG_S cfg;
     memset(&cfg, 0, sizeof(cfg));
-    /* Блок с запасом под самый большой вход модели (960x540x3); TDL создаёт
-       на нём каналы своего VPSS. */
+    /* Block with headroom for the largest model input (960x540x3); TDL creates
+       its VPSS channels on it. */
     cfg.u32BlkSize = 960u * 540u * 3u + (64u * 1024u);
     cfg.u32BlkCnt = 3;
     cfg.enRemapMode = VB_REMAP_MODE_NONE;
     g_tdl_pool = CVI_VB_CreatePool(&cfg);
     if (g_tdl_pool == VB_INVALID_POOLID) {
-        printf("faces: не удалось создать VB-пул для TDL\n");
+        printf("faces: failed to create the VB pool for TDL\n");
         fflush(stdout);
         return -1;
     }
@@ -807,11 +810,11 @@ int face_init(const char *fd_model, const char *fr_model, const char *live_model
     return 0;
 }
 
-/* Пересоздаёт TDL целиком: после зависания TPU старый handle больше не
-   работает (инференс падает мгновенно), помогает только пересоздание. */
-/* Освобождение TDL. Вызовы StopGrp/DestroyHandle умеют виснуть на этой
-   прошивке, поэтому делаем их в отдельном потоке и ждём не дольше 3 с:
-   лучше потерять VB-пул, чем не дать приложению завершиться. */
+/* Recreates TDL entirely: after a TPU hang the old handle no longer works
+   (inference fails instantly), and only recreation helps. */
+/* Release TDL. StopGrp/DestroyHandle calls can hang on this firmware, so we
+   run them in a separate thread and wait no longer than 3 s: losing the VB
+   pool is better than preventing the application from exiting. */
 static void tdl_release(void) {
     if (g_tdl == NULL) return;
     g_cleanup_done = 0;
@@ -827,13 +830,13 @@ static void tdl_release(void) {
 }
 
 int face_restart(void) {
-    printf("faces: пересоздаю TDL\n");
+    printf("faces: recreating TDL\n");
     fflush(stdout);
     tdl_release();
     g_live_on = 0;
     if (tdl_open_handle() != 0) return -1;
-    /* Тот же VB-пул переиспользуем: новый создавать не нужно, а старый не
-       удалить (DestroyPool с висящими ссылками TDL виснет). */
+    /* Reuse the same VB pool: no need to create a new one, and the old one
+       cannot be destroyed (DestroyPool hangs with dangling TDL references). */
     if (g_tdl_pool != VB_INVALID_POOLID) {
         CVI_S32 rc = (p_set_vbpool != NULL) ? p_set_vbpool(g_tdl, 0, g_tdl_pool) : -1;
         if (p_set_timeout != NULL) p_set_timeout(g_tdl, 1000);
@@ -883,7 +886,7 @@ static float feature_similarity(const cvtdl_feature_t *f, const float *g, int gn
     return -1.0f;
 }
 
-/* Копирует фичу в float-вектор; возвращает размерность или 0. */
+/* Copies a feature into a float vector; returns the dimension or 0. */
 static int feature_to_float(const cvtdl_feature_t *f, float *out, int max) {
     if (f->ptr == NULL || f->size == 0 || (int)f->size > max) return 0;
     if (f->type == TYPE_INT8) {
@@ -896,9 +899,9 @@ static int feature_to_float(const cvtdl_feature_t *f, float *out, int max) {
     return (int)f->size;
 }
 
-/* Распознавание (cviface) — самая тяжёлая модель после детекции. Гоняем её
-   раз в 3 кадра, а на промежуточных берём имя из кэша по IoU: нагрузка на TPU
-   ниже, подпись не мигает. */
+/* Recognition (cviface) is the heaviest model after detection. Run it once
+   every 3 frames, and on intermediate frames take the name from the IoU cache:
+   TPU load is lower and the label does not flicker. */
 static face_box_t g_rec_boxes[8];
 static int g_rec_n = 0;
 static int g_frame_no = 0;
@@ -924,8 +927,8 @@ int face_process(void *frame_info, face_box_t *out, int max) {
         }
         return -2;
     }
-    /* Пока живость не подтверждена, лицо не опознаём: фотография не моргает,
-       значит пассивная проверка её отсечёт. */
+    /* Until liveness is confirmed, do not recognize the face: a photo does not
+       blink, so the passive check will filter it out. */
     const int live_ok = face_liveness_ok();
     const int is_photo = (face_liveness_state() == LIVE_PHOTO);
     const int do_rec = ((g_frame_no++ % 3) == 0);
@@ -937,13 +940,13 @@ int face_process(void *frame_info, face_box_t *out, int max) {
         if (g_live_on) {
             const int lr = liveness_score(g_tdl, vf, &faces);
             if (lr == -2) {
-                /* Модель зависла: TDL надо пересоздать (этим занимается поток
-                   детекции в main_face.cpp). */
+                /* The model hung: TDL must be recreated (the detection thread
+                   in main_face.cpp does this). */
                 p_free_face(&faces);
                 return -5;
             }
             if (lr != 0) {
-                printf("faces: liveness не выполнился, проверка фото отключена\n");
+                printf("faces: liveness failed, photo check disabled\n");
                 fflush(stdout);
                 g_live_on = 0;
                 g_live_thr = -1.0f;
@@ -951,14 +954,14 @@ int face_process(void *frame_info, face_box_t *out, int max) {
         }
     }
 
-    /* bbox приходит в системе координат кадра; TDL может вернуть её в своих
-       width/height (после внутреннего ресайза). */
+    /* bbox comes in the frame coordinate system; TDL may return it in its own
+       width/height (after internal resizing). */
     float sx = 1.0f, sy = 1.0f;
     const uint32_t fw = vf->stVFrame.u32Width, fh = vf->stVFrame.u32Height;
     if (faces.width > 0 && faces.width != fw) sx = (float)fw / (float)faces.width;
     if (faces.height > 0 && faces.height != fh) sy = (float)fh / (float)faces.height;
 
-    /* Крупнейшее лицо — кандидат для регистрации. */
+    /* The largest face is the enrollment candidate. */
     int enroll_idx = -1;
     float enroll_area = 0.0f;
     if (g_en_state == EN_COLLECT && !is_photo) {
@@ -994,7 +997,7 @@ int face_process(void *frame_info, face_box_t *out, int max) {
         b.live = (fi->liveness_score >= 0.0f) ? fi->liveness_score : -1.0f;
         b.live_ok = live_ok;
         if (!do_rec) {
-            /* кадр без распознавания: имя с прошлого кадра, если рамка та же */
+            /* frame without recognition: take the name from the previous frame if the box is the same */
             int best_iou = 0, ci = -1;
             for (int c = 0; c < g_rec_n; c++) {
                 const int io = lv_iou(b.x1, b.y1, b.x2, b.y2, g_rec_boxes[c].x1,
@@ -1023,13 +1026,13 @@ int face_process(void *frame_info, face_box_t *out, int max) {
             const int model_ok = (g_live_thr < 0.0f) || !g_live_on || (b.live >= g_live_thr);
             if (best_i >= 0 && best >= g_match_thr && model_ok && !is_photo)
                 snprintf(b.name, sizeof(b.name), "%s", g_people[best_i].name);
-            /* Имя показываем и до моргания — жёлтой рамкой «имя?»; зелёной
-               рамка станет, когда b.live_ok подтвердится морганием. Фотография
-               (is_photo) имя не получает: рисуется «photo?». */
+            /* Show the name even before a blink — with a yellow "name?" box;
+               the box turns green when b.live_ok is confirmed by a blink. A
+               photo (is_photo) gets no name: "photo?" is drawn. */
         }
         out[n++] = b;
 
-        /* Сбор кадров для регистрации: только самое крупное лицо. */
+        /* Collect enrollment frames: only the largest face. */
         if (g_en_state == EN_COLLECT && (int)i == enroll_idx) {
             int bw = b.x2 - b.x1, bh = b.y2 - b.y1;
             int live_ok = (g_live_thr < 0.0f) || !g_live_on || (b.live >= g_live_thr);
@@ -1057,5 +1060,5 @@ int face_process(void *frame_info, face_box_t *out, int max) {
 
 void face_close(void) {
     tdl_release();
-    g_tdl_pool = VB_INVALID_POOLID; /* освободит ядро при выходе процесса */
+    g_tdl_pool = VB_INVALID_POOLID; /* the kernel will free it when the process exits */
 }

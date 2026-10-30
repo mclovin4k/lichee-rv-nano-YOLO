@@ -1,4 +1,4 @@
-"""Страница модели: датасет → обучение → ONNX → cvimodel."""
+"""Model page: dataset → training → ONNX → cvimodel."""
 
 from __future__ import annotations
 
@@ -39,28 +39,28 @@ class ModelPage(QWidget):
 
         left = QVBoxLayout()
 
-        ds_box = QGroupBox("1. Датасет")
+        ds_box = QGroupBox("1. Dataset")
         dl = QVBoxLayout(ds_box)
-        self.ds_info = QLabel("датасет не выбран")
+        self.ds_info = QLabel("no dataset selected")
         self.ds_info.setWordWrap(True)
         self.ds_info.setMinimumHeight(38)
         self.ds_info.setAlignment(Qt.AlignmentFlag.AlignTop)
         dl.addWidget(self.ds_info)
         cls_row = QHBoxLayout()
-        cls_row.addWidget(QLabel("Классы:"))
+        cls_row.addWidget(QLabel("Classes:"))
         self.class_edit = QLineEdit()
-        self.class_edit.setPlaceholderText("например, drone, person")
+        self.class_edit.setPlaceholderText("e.g. drone, person")
         self.class_edit.setToolTip(
-            "Имена классов через запятую. Порядок = id: первый — 0, второй — 1. "
-            "Обновляет dataset.json и data.yaml.")
+            "Comma-separated class names. Order = id: the first is 0, the second is 1. "
+            "Updates dataset.json and data.yaml.")
         self.class_edit.returnPressed.connect(self._save_class)
         cls_row.addWidget(self.class_edit, 1)
-        self.btn_class = QPushButton("Сохранить")
-        self.btn_class.setToolTip("Сохранить список классов в датасете")
+        self.btn_class = QPushButton("Save")
+        self.btn_class.setToolTip("Save the class list to the dataset")
         self.btn_class.clicked.connect(self._save_class)
         cls_row.addWidget(self.btn_class)
         dl.addLayout(cls_row)
-        self.btn_split = QPushButton("Подготовить датасет (train/val + калибровка)")
+        self.btn_split = QPushButton("Prepare dataset (train/val + calibration)")
         self.btn_split.clicked.connect(self._prepare_split)
         dl.addWidget(self.btn_split)
         self.split_info = QLabel("")
@@ -68,22 +68,22 @@ class ModelPage(QWidget):
         dl.addWidget(self.split_info)
         left.addWidget(ds_box)
 
-        pt_box = QGroupBox("2. Веса")
+        pt_box = QGroupBox("2. Weights")
         pl = QVBoxLayout(pt_box)
-        self.pt_info = QLabel("веса: нет")
+        self.pt_info = QLabel("weights: none")
         self.pt_info.setWordWrap(True)
         pl.addWidget(self.pt_info)
-        self.btn_import = QPushButton("Импорт готового .pt…")
+        self.btn_import = QPushButton("Import ready .pt…")
         self.btn_import.clicked.connect(self._import_pt)
         pl.addWidget(self.btn_import)
         left.addWidget(pt_box)
 
-        train_box = QGroupBox("3. Обучение")
+        train_box = QGroupBox("3. Training")
         tl = QFormLayout(train_box)
         self.epochs = QSpinBox()
         self.epochs.setRange(1, 1000)
         self.epochs.setValue(60)
-        tl.addRow("Эпох:", self.epochs)
+        tl.addRow("Epochs:", self.epochs)
         self.imgsz = QSpinBox()
         self.imgsz.setRange(256, 960)
         self.imgsz.setSingleStep(32)
@@ -94,36 +94,36 @@ class ModelPage(QWidget):
         self.batch.setValue(8)
         tl.addRow("batch:", self.batch)
         self.base_model = QLineEdit(str(self.cfg.get("train_base", "yolo11n.pt")))
-        tl.addRow("базовая:", self.base_model)
-        self.btn_train = QPushButton("Обучить на CPU")
+        tl.addRow("base:", self.base_model)
+        self.btn_train = QPushButton("Train on CPU")
         self.btn_train.clicked.connect(self._train)
         tl.addWidget(self.btn_train)
-        warn = QLabel("CPU-обучение медленное: для первых опытов хватит "
-                      "небольшого датасета и imgsz 416–640.\n"
-                      "Базовая модель: yolo11n.pt (нужен интернет или локальный "
-                      "файл) либо yolo11n.yaml — обучение с нуля без скачивания.")
+        warn = QLabel("CPU training is slow: for initial experiments, a small "
+                      "dataset and imgsz 416–640 are enough.\n"
+                      "Base model: yolo11n.pt (requires internet or a local "
+                      "file) or yolo11n.yaml — train from scratch without downloading.")
         warn.setWordWrap(True)
         warn.setStyleSheet("color: #b45309;")
         tl.addWidget(warn)
         left.addWidget(train_box)
 
-        exp_box = QGroupBox("4. Экспорт и конвертация")
+        exp_box = QGroupBox("4. Export and conversion")
         el = QVBoxLayout(exp_box)
-        self.btn_onnx = QPushButton("Экспорт ONNX (6 выходов)")
+        self.btn_onnx = QPushButton("Export ONNX (6 outputs)")
         self.btn_onnx.clicked.connect(self._export_onnx)
         el.addWidget(self.btn_onnx)
-        self.onnx_info = QLabel("ONNX: нет")
+        self.onnx_info = QLabel("ONNX: none")
         self.onnx_info.setWordWrap(True)
         el.addWidget(self.onnx_info)
         name_row = QVBoxLayout()
-        name_row.addWidget(QLabel("Имя файла модели:"))
+        name_row.addWidget(QLabel("Model file name:"))
         self.out_name = QLineEdit()
         name_row.addWidget(self.out_name)
         el.addLayout(name_row)
-        self.btn_cvimodel = QPushButton("Собрать cvimodel")
+        self.btn_cvimodel = QPushButton("Build cvimodel")
         self.btn_cvimodel.clicked.connect(self._build_cvimodel)
         el.addWidget(self.btn_cvimodel)
-        self.cv_info = QLabel("cvimodel: нет")
+        self.cv_info = QLabel("cvimodel: none")
         self.cv_info.setWordWrap(True)
         el.addWidget(self.cv_info)
         left.addWidget(exp_box)
@@ -141,13 +141,13 @@ class ModelPage(QWidget):
 
         right = QVBoxLayout()
         log_head = QHBoxLayout()
-        log_head.addWidget(QLabel("Лог сборки"))
+        log_head.addWidget(QLabel("Build log"))
         log_head.addStretch(1)
-        self.btn_cancel = QPushButton("Отмена")
+        self.btn_cancel = QPushButton("Cancel")
         self.btn_cancel.setEnabled(False)
         self.btn_cancel.clicked.connect(self._cancel)
         log_head.addWidget(self.btn_cancel)
-        btn_clear = QPushButton("Очистить")
+        btn_clear = QPushButton("Clear")
         btn_clear.clicked.connect(lambda: self.log.clear())
         log_head.addWidget(btn_clear)
         right.addLayout(log_head)
@@ -159,35 +159,35 @@ class ModelPage(QWidget):
         self._busy_buttons = [self.btn_split, self.btn_import, self.btn_train,
                               self.btn_onnx, self.btn_cvimodel, self.btn_class]
 
-    # ---------- состояние ----------
+    # ---------- state ----------
 
     def refresh(self) -> None:
         ds = self.dataset
         if ds is None:
-            self.ds_info.setText("датасет не выбран")
+            self.ds_info.setText("no dataset selected")
             self.class_edit.clear()
         else:
             if not self.class_edit.hasFocus():
                 self.class_edit.setText(", ".join(ds.class_names))
             st = ds.stats()
             self.ds_info.setText(
-                f"{ds.root}\nклассов: {len(ds.class_names)} · кадров: {st['images']} · "
-                f"размечено: {st['labeled']} · рамок: {st['boxes']}"
+                f"{ds.root}\nclasses: {len(ds.class_names)} · frames: {st['images']} · "
+                f"labeled: {st['labeled']} · boxes: {st['boxes']}"
                 + ("" if st["unlabeled"] == 0 else
-                   f" · без разметки: {st['unlabeled']}"))
+                   f" · unlabeled: {st['unlabeled']}"))
             if ds.data_yaml.is_file():
                 self.split_info.setText(f"data.yaml: {ds.data_yaml}")
             else:
-                self.split_info.setText("датасет ещё не разбит на train/val")
+                self.split_info.setText("dataset has not been split into train/val yet")
         pt = ds.best_pt() if ds else None
-        self.pt_info.setText(f"веса: {pt}" if pt else "веса: нет (обучите или импортируйте .pt)")
+        self.pt_info.setText(f"weights: {pt}" if pt else "weights: none (train or import a .pt)")
         onnx = ds.best_onnx() if ds else None
-        self.onnx_info.setText(f"ONNX: {onnx}" if onnx else "ONNX: нет")
+        self.onnx_info.setText(f"ONNX: {onnx}" if onnx else "ONNX: none")
         calib = pipeline.count_calib(ds.calib_dir) if ds else 0
         cv = ds.best_cvimodel() if ds else None
         self.cv_info.setText(
-            (f"cvimodel: {cv}\n" if cv else "cvimodel: нет\n") +
-            f"кадров для калибровки: {calib}")
+            (f"cvimodel: {cv}\n" if cv else "cvimodel: none\n") +
+            f"calibration frames: {calib}")
         if ds is not None:
             imgsz = int(self.imgsz.value())
             if not self.out_name.text().strip() or \
@@ -214,18 +214,18 @@ class ModelPage(QWidget):
         self.refresh()
         super().showEvent(event)
 
-    # ---------- действия ----------
+    # ---------- actions ----------
 
     def _sync_classes(self) -> bool:
-        """Применяет список классов из поля к датасету. False — ошибка."""
+        """Applies the class list from the field to the dataset. False means error."""
         ds = self.dataset
         if ds is None:
             return True
         names = [part.strip() for part in re.split(r"[,;]", self.class_edit.text())
                  if part.strip()]
         if not names:
-            QMessageBox.warning(self, "Классы",
-                                "Укажите хотя бы одно имя класса.")
+            QMessageBox.warning(self, "Classes",
+                                "Enter at least one class name.")
             return False
         if names == ds.class_names:
             self.class_edit.setText(", ".join(names))
@@ -233,7 +233,7 @@ class ModelPage(QWidget):
         try:
             ds.update_class_names(names)
         except OSError as exc:
-            QMessageBox.critical(self, "Ошибка", str(exc))
+            QMessageBox.critical(self, "Error", str(exc))
             return False
         self.main.set_dataset(ds)
         return True
@@ -241,39 +241,39 @@ class ModelPage(QWidget):
     def _save_class(self) -> None:
         ds = self.dataset
         if ds is None:
-            QMessageBox.information(self, "Нет датасета", "Сначала создайте датасет.")
+            QMessageBox.information(self, "No dataset", "Create a dataset first.")
             return
         if not self._sync_classes():
             return
         self.main.statusBar().showMessage(
-            f"классы: {', '.join(ds.class_names)} "
+            f"classes: {', '.join(ds.class_names)} "
             f"(id 0…{len(ds.class_names) - 1})")
 
     def _prepare_split(self) -> None:
         ds = self.dataset
         if ds is None:
-            QMessageBox.information(self, "Нет датасета", "Сначала соберите датасет.")
+            QMessageBox.information(self, "No dataset", "Create a dataset first.")
             return
         if not self._sync_classes():
             return
         try:
             info = ds.build_split()
         except Exception as exc:  # noqa: BLE001
-            QMessageBox.critical(self, "Ошибка", str(exc))
+            QMessageBox.critical(self, "Error", str(exc))
             return
         self.split_info.setText(
-            f"готово: train {info['train']}, val {info['val']}, "
-            f"калибровка {info['calib']}\n{info['yaml']}")
+            f"done: train {info['train']}, val {info['val']}, "
+            f"calibration {info['calib']}\n{info['yaml']}")
         self.log.append_line(
-            f"датасет: train={info['train']} val={info['val']} calib={info['calib']}")
+            f"dataset: train={info['train']} val={info['val']} calib={info['calib']}")
         self.refresh()
 
     def _import_pt(self) -> None:
         ds = self.dataset
         if ds is None:
-            QMessageBox.information(self, "Нет датасета", "Сначала создайте датасет.")
+            QMessageBox.information(self, "No dataset", "Create a dataset first.")
             return
-        path, _ = QFileDialog.getOpenFileName(self, "Выберите .pt", "", "PyTorch (*.pt)")
+        path, _ = QFileDialog.getOpenFileName(self, "Select .pt", "", "PyTorch (*.pt)")
         if not path:
             return
         src = Path(path)
@@ -282,9 +282,9 @@ class ModelPage(QWidget):
         try:
             shutil.copy2(src, dst)
         except OSError as exc:
-            QMessageBox.critical(self, "Ошибка", str(exc))
+            QMessageBox.critical(self, "Error", str(exc))
             return
-        self.log.append_line(f"импорт весов: {dst}")
+        self.log.append_line(f"imported weights: {dst}")
         self.refresh()
 
     def _train(self) -> None:
@@ -294,24 +294,24 @@ class ModelPage(QWidget):
         if not self._sync_classes():
             return
         if not ds.data_yaml.is_file():
-            QMessageBox.information(self, "Нет data.yaml",
-                                    "Сначала нажмите «Подготовить датасет».")
+            QMessageBox.information(self, "No data.yaml",
+                                    "Click “Prepare dataset” first.")
             return
         ultra = str(self.cfg.get("ultra_python"))
         if not Path(ultra).is_file():
-            QMessageBox.critical(self, "Нет Python",
-                                 f"Не найден {ultra}. Укажите путь в настройках.")
+            QMessageBox.critical(self, "Python not found",
+                                 f"{ultra} not found. Set the path in Settings.")
             return
         self.cfg["train_base"] = self.base_model.text().strip() or "yolo11n.pt"
         self.cfg.save()
         if QMessageBox.question(
-                self, "Обучение на CPU",
-                f"Обучить {self.base_model.text()} на CPU: "
-                f"{self.epochs.value()} эпох, imgsz {self.imgsz.value()}?\n"
-                "Это может занять часы.") != QMessageBox.StandardButton.Yes:
+                self, "Train on CPU",
+                f"Train {self.base_model.text()} on CPU: "
+                f"{self.epochs.value()} epochs, imgsz {self.imgsz.value()}?\n"
+                "This may take hours.") != QMessageBox.StandardButton.Yes:
             return
         self.log.append_line(
-            f"$ обучение: epochs={self.epochs.value()} imgsz={self.imgsz.value()} "
+            f"$ training: epochs={self.epochs.value()} imgsz={self.imgsz.value()} "
             f"batch={self.batch.value()}")
         self._run(
             pipeline.train_local,
@@ -328,9 +328,9 @@ class ModelPage(QWidget):
         try:
             shutil.copy2(best, dst)
         except OSError as exc:
-            QMessageBox.critical(self, "Ошибка", str(exc))
+            QMessageBox.critical(self, "Error", str(exc))
             return
-        self.log.append_line(f"лучшие веса: {dst}")
+        self.log.append_line(f"best weights: {dst}")
         self.refresh()
 
     def _export_onnx(self) -> None:
@@ -340,10 +340,10 @@ class ModelPage(QWidget):
             return
         ultra = str(self.cfg.get("ultra_python"))
         if not Path(ultra).is_file():
-            QMessageBox.critical(self, "Нет Python",
-                                 f"Не найден {ultra}. Укажите путь в настройках.")
+            QMessageBox.critical(self, "Python not found",
+                                 f"{ultra} not found. Set the path in Settings.")
             return
-        self.log.append_line(f"$ экспорт ONNX (imgsz={self.imgsz.value()})…")
+        self.log.append_line(f"$ ONNX export (imgsz={self.imgsz.value()})…")
         self._run(pipeline.export_onnx, pt, ultra, imgsz=self.imgsz.value(),
                   on_done=self._onnx_done)
 
@@ -363,15 +363,15 @@ class ModelPage(QWidget):
             return
         tpu = str(self.cfg.get("tpu_python"))
         if not Path(tpu).is_file():
-            QMessageBox.critical(self, "Нет Python",
-                                 f"Не найден {tpu}. Укажите путь в настройках.")
+            QMessageBox.critical(self, "Python not found",
+                                 f"{tpu} not found. Set the path in Settings.")
             return
         name = self.out_name.text().strip()
         if not name:
             name = f"model_{ds.slug}.cvimodel"
         if not name.endswith(".cvimodel"):
             name += ".cvimodel"
-        self.log.append_line(f"$ сборка cvimodel: {name}")
+        self.log.append_line(f"$ cvimodel build: {name}")
         self._run(
             pipeline.build_cvimodel, onnx, ds.calib_dir, name, tpu,
             ds.model_dir / "build", imgsz=self.imgsz.value(),
@@ -379,22 +379,22 @@ class ModelPage(QWidget):
 
     def _cv_done(self, path: Path) -> None:
         self.main.last_cvimodel = path
-        self.log.append_line(f"готово: {path}")
+        self.log.append_line(f"done: {path}")
         ds = self.dataset
         if ds is not None:
             names = path.with_suffix(".names")
             try:
                 names.write_text("\n".join(ds.class_names) + "\n", encoding="utf-8")
-                self.log.append_line(f"имена классов: {names.name}")
+                self.log.append_line(f"class names: {names.name}")
             except OSError as exc:
-                self.log.append_line(f"не удалось записать {names.name}: {exc}")
+                self.log.append_line(f"failed to write {names.name}: {exc}")
         self.refresh()
-        if QMessageBox.question(self, "Модель собрана",
-                                "cvimodel готов. Перейти к заливке на плату?") \
+        if QMessageBox.question(self, "Model built",
+                                "cvimodel is ready. Upload it to the board now?") \
                 == QMessageBox.StandardButton.Yes:
             self.main.go_to_board(path)
 
-    # ---------- фон ----------
+    # ---------- background ----------
 
     def _run(self, fn, *args, on_done, **kwargs) -> None:
         if self._worker is not None:
@@ -412,11 +412,11 @@ class ModelPage(QWidget):
         try:
             on_done(result)
         except Exception as exc:  # noqa: BLE001
-            QMessageBox.critical(self, "Ошибка", str(exc))
+            QMessageBox.critical(self, "Error", str(exc))
 
     def _worker_failed(self, message: str) -> None:
-        self.log.append_line(f"ОШИБКА: {message}")
-        QMessageBox.critical(self, "Не получилось", message)
+        self.log.append_line(f"ERROR: {message}")
+        QMessageBox.critical(self, "Failed", message)
 
     def _worker_finished(self) -> None:
         if self._worker is not None:
@@ -426,7 +426,7 @@ class ModelPage(QWidget):
 
     def _cancel(self) -> None:
         if self._worker is not None:
-            self.log.append_line("отмена…")
+            self.log.append_line("cancelling…")
             self._worker.cancel()
 
     def shutdown(self) -> None:

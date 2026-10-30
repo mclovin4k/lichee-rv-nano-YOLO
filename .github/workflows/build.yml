@@ -20,7 +20,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        project: [yolo_stream, yolo_face]
+        include:
+          - project: yolo_stream
+            binary: stream_yolo
+          - project: yolo_face
+            binary: face_stream
     steps:
       - uses: actions/checkout@v4
 
@@ -50,6 +54,15 @@ jobs:
         working-directory: ${{ matrix.project }}
         run: ./scripts/build.sh
 
+      - name: Package board bundle
+        run: |
+          mkdir -p out
+          scripts/package-board.sh \
+            "${{ matrix.project }}" \
+            "${{ matrix.project }}/build/bin/${{ matrix.binary }}" \
+            "${{ matrix.project }}/.deps/riscv64-linux-musl-cross" \
+            out
+
       - name: Upload binary
         uses: actions/upload-artifact@v4
         with:
@@ -59,26 +72,141 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+      - name: Upload board package
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.project }}-board
+          path: |
+            out/${{ matrix.project }}-board.tar.gz
+            out/${{ matrix.project }}-board.tar.gz.sha256
+          if-no-files-found: error
+          retention-days: 30
+
       - name: Write job summary
         run: |
           {
             echo "### ${{ matrix.project }}"
             echo ""
-            echo "Собранный бинарник лежит в артефакте \`${{ matrix.project }}-bin\`."
+            echo "Binary: \`${{ matrix.project }}-bin\`"
+            echo "Board bundle: \`${{ matrix.project }}-board\`"
             echo ""
             echo '```'
-            ls -lh "${{ matrix.project }}/build/bin"
+            ls -lh "${{ matrix.project }}/build/bin" out
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
-  studio:
-    name: yolo_studio (python)
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
+  studio-linux:
+    name: yolo_studio (Linux x86_64)
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Byte-compile
-        run: python -m compileall -q yolo_studio/app.py yolo_studio/studio
+
+      - name: Install Qt/X11 runtime libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libxcb-cursor0 libxkbcommon-x11-0 libxcb-icccm4 libxcb-image0 \
+            libxcb-keysyms1 libxcb-randr0 libxcb-render-util0 libxcb-shape0 \
+            libxcb-xinerama0 libxcb-xkb1 libxcb-util1
+
+      - name: Install Python dependencies
+        working-directory: yolo_studio
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt pyinstaller
+
+      - name: Build standalone executable
+        working-directory: yolo_studio
+        run: python tools/build_desktop.py
+
+      - name: Smoke test (offscreen)
+        working-directory: yolo_studio
+        run: |
+          QT_QPA_PLATFORM=offscreen timeout 30s ./dist/LicheeYOLOStudio --smoke-test
+
+      - name: Package Linux release
+        working-directory: yolo_studio
+        run: |
+          mkdir -p ../out
+          tar -C dist -czf ../out/yolo_studio-linux-x86_64.tar.gz LicheeYOLOStudio
+          cd ../out
+          sha256sum yolo_studio-linux-x86_64.tar.gz > yolo_studio-linux-x86_64.tar.gz.sha256
+
+      - name: Upload Linux package
+        uses: actions/upload-artifact@v4
+        with:
+          name: yolo_studio-linux
+          path: |
+            out/yolo_studio-linux-x86_64.tar.gz
+            out/yolo_studio-linux-x86_64.tar.gz.sha256
+          if-no-files-found: error
+
+  studio-windows:
+    name: yolo_studio (Windows x86_64)
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Python dependencies
+        working-directory: yolo_studio
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt pyinstaller
+
+      - name: Build standalone executable
+        working-directory: yolo_studio
+        run: python tools/build_desktop.py
+
+      - name: Smoke test (offscreen)
+        working-directory: yolo_studio
+        shell: pwsh
+        run: |
+          $env:QT_QPA_PLATFORM = "offscreen"
+          $p = Start-Process -FilePath ".\dist\LicheeYOLOStudio.exe" `
+            -ArgumentList "--smoke-test" -PassThru -Wait
+          if ($p.ExitCode -ne 0) {
+            throw "smoke test failed with exit code $($p.ExitCode)"
+          }
+
+      - name: Upload Windows executable
+        uses: actions/upload-artifact@v4
+        with:
+          name: yolo_studio-windows
+          path: yolo_studio/dist/LicheeYOLOStudio.exe
+          if-no-files-found: error
+
+  release:
+    name: Publish release assets
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [riscv, studio-linux, studio-windows]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Collect release assets
+        run: |
+          mkdir -p release
+          find artifacts -type f \
+            \( -name '*.tar.gz' -o -name '*.sha256' -o -name '*.exe' \) \
+            -exec cp {} release/ \;
+          cd release
+          sha256sum * > SHA256SUMS.txt
+          ls -lh
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release/*
+          generate_release_notes: true

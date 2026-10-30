@@ -1,4 +1,4 @@
-"""Общие виджеты: просмотр кадра с рамками, фоновые задачи, лог."""
+"""Shared widgets: frame view with boxes, background tasks, log."""
 
 from __future__ import annotations
 
@@ -29,7 +29,7 @@ def bgr_to_qimage(frame: np.ndarray) -> QImage:
 
 
 class FrameView(QWidget):
-    """Кадр с рамками. В режиме editable рамка рисуется мышью."""
+    """Frame with boxes. In editable mode, boxes are drawn with the mouse."""
 
     box_added = Signal(object)          # Box
     box_selected = Signal(int)
@@ -51,7 +51,7 @@ class FrameView(QWidget):
         self._class_names = ["object"]
         self._new_cls = 0
 
-    # ---------- данные ----------
+    # ---------- data ----------
 
     def set_frame(self, frame: np.ndarray | QImage | None) -> None:
         if frame is None:
@@ -76,7 +76,7 @@ class FrameView(QWidget):
         self.update()
 
     def set_new_class(self, cls: int) -> None:
-        """Класс, который получит следующая нарисованная рамка."""
+        """Class assigned to the next drawn box."""
         self._new_cls = max(0, int(cls))
 
     def set_box_class(self, index: int, cls: int) -> None:
@@ -99,7 +99,7 @@ class FrameView(QWidget):
         self._img_size = (0, 0)
         self.update()
 
-    # ---------- геометрия ----------
+    # ---------- geometry ----------
 
     def _fit(self) -> tuple[float, float, float, float, float]:
         if self._image is None or not self._img_size[0]:
@@ -127,7 +127,7 @@ class FrameView(QWidget):
                 return i
         return -1
 
-    # ---------- события ----------
+    # ---------- events ----------
 
     def paintEvent(self, _event) -> None:
         painter = QPainter(self)
@@ -136,7 +136,7 @@ class FrameView(QWidget):
         if self._image is None:
             painter.setPen(QColor("#6b7280"))
             painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter,
-                             "нет кадра — подключите камеру")
+                             "no frame — connect the camera")
             return
         x, y, w, h, scale = self._fit()
         painter.drawImage(QRectF(x, y, w, h), self._image)
@@ -229,7 +229,7 @@ class FrameView(QWidget):
 
 
 class Worker(QThread):
-    """Выполняет функцию в фоне; функция принимает cancel= и on_line=."""
+    """Runs a function in the background; the function accepts cancel= and on_line=."""
 
     line = Signal(str)
     failed = Signal(str)
@@ -251,7 +251,7 @@ class Worker(QThread):
                               on_line=self.line.emit, **self._kwargs)
             if not self._cancel.is_set():
                 self.done.emit(result)
-        except Exception as exc:  # noqa: BLE001 — показываем пользователю
+        except Exception as exc:  # noqa: BLE001 — show the error to the user
             if not self._cancel.is_set():
                 self.failed.emit(str(exc) or exc.__class__.__name__)
 
@@ -261,7 +261,7 @@ class LogPane(QPlainTextEdit):
         super().__init__(parent)
         self.setReadOnly(True)
         self.setMaximumBlockCount(4000)
-        self.setPlaceholderText("лог сборки…")
+        self.setPlaceholderText("build log…")
 
     def append_line(self, text: str) -> None:
         self.appendPlainText(text)

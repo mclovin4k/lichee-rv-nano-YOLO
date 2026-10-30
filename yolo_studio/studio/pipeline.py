@@ -1,4 +1,4 @@
-"""Сборка модели: обучение, экспорт ONNX, конвертация в cvimodel."""
+"""Model build: training, ONNX export, conversion to cvimodel."""
 
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ def run_stream(cmd: list[str], cwd: str | Path | None = None,
                env: dict | None = None, on_line=None,
                cancel: threading.Event | None = None,
                timeout: float | None = None) -> int:
-    """Запускает команду, отдавая строки вывода в on_line."""
+    """Runs a command, passing output lines to on_line."""
     proc = subprocess.Popen(
         [str(c) for c in cmd], cwd=str(cwd) if cwd else None, env=env,
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
@@ -36,13 +36,13 @@ def run_stream(cmd: list[str], cwd: str | Path | None = None,
                 on_line(line.rstrip())
             if cancel is not None and cancel.is_set():
                 _terminate(proc)
-                raise Cancelled("отменено")
+                raise Cancelled("cancelled")
         rc = proc.wait(timeout=timeout)
     finally:
         if proc.poll() is None:
             _terminate(proc)
     if rc != 0:
-        raise PipelineError(f"команда завершилась с кодом {rc}")
+        raise PipelineError(f"command exited with code {rc}")
     return rc
 
 
@@ -54,7 +54,7 @@ def _terminate(proc: subprocess.Popen) -> None:
         proc.kill()
 
 
-# ---------- обучение ----------
+# ---------- training ----------
 
 def train_local(data_yaml: str | Path, work_dir: str | Path, ultra_python: str,
                 epochs: int = 60, imgsz: int = 640, batch: int = 8,
@@ -64,7 +64,7 @@ def train_local(data_yaml: str | Path, work_dir: str | Path, ultra_python: str,
     work.mkdir(parents=True, exist_ok=True)
     yolo_bin = Path(ultra_python).with_name("yolo")
     if not yolo_bin.is_file():
-        raise PipelineError(f"нет yolo CLI рядом с {ultra_python}")
+        raise PipelineError(f"no yolo CLI next to {ultra_python}")
     cmd = [
         str(yolo_bin), "detect", "train",
         f"data={Path(data_yaml)}",
@@ -81,27 +81,27 @@ def train_local(data_yaml: str | Path, work_dir: str | Path, ultra_python: str,
     run_stream(cmd, cwd=work, on_line=on_line, cancel=cancel)
     best = work / "train" / "weights" / "best.pt"
     if not best.is_file():
-        raise PipelineError(f"обучение закончилось, но нет {best}")
+        raise PipelineError(f"training finished but {best} is missing")
     return best
 
 
-# ---------- экспорт ONNX ----------
+# ---------- ONNX export ----------
 
 def export_onnx(pt: str | Path, ultra_python: str, imgsz: int = 640,
                 on_line=None, cancel: threading.Event | None = None) -> Path:
     pt = Path(pt)
     if not pt.is_file():
-        raise PipelineError(f"нет весов {pt}")
+        raise PipelineError(f"weights not found: {pt}")
     script = TOOLS / "export_yolo11.py"
     if not script.is_file():
-        raise PipelineError(f"нет скрипта {script}")
+        raise PipelineError(f"script not found: {script}")
     run_stream([ultra_python, str(script), str(pt), str(int(imgsz))],
                cwd=pt.parent, on_line=on_line, cancel=cancel)
     onnx = pt.with_suffix(".onnx")
     if not onnx.is_file():
         found = sorted(pt.parent.glob("*.onnx"))
         if not found:
-            raise PipelineError("ONNX не появился после экспорта")
+            raise PipelineError("ONNX was not created after export")
         onnx = found[-1]
     return onnx
 
@@ -125,13 +125,13 @@ def build_cvimodel(onnx: str | Path, calib_dir: str | Path,
     onnx = Path(onnx)
     calib = Path(calib_dir)
     if not onnx.is_file():
-        raise PipelineError(f"нет ONNX {onnx}")
+        raise PipelineError(f"ONNX not found: {onnx}")
     n_calib = count_calib(calib)
     if n_calib == 0:
-        raise PipelineError("нет кадров для калибровки — пересоберите датасет")
+        raise PipelineError("no calibration frames — rebuild the dataset")
     script = TOOLS / "build_cvimodel.sh"
     if not script.is_file():
-        raise PipelineError(f"нет скрипта {script}")
+        raise PipelineError(f"script not found: {script}")
 
     work = Path(work_dir)
     work.mkdir(parents=True, exist_ok=True)
@@ -156,7 +156,7 @@ def build_cvimodel(onnx: str | Path, calib_dir: str | Path,
     if not built.is_file():
         candidates = sorted(work.glob("*.cvimodel"))
         if not candidates:
-            raise PipelineError("cvimodel не появился")
+            raise PipelineError("cvimodel was not created")
         built = candidates[-1]
     final = onnx.parent / out_name
     shutil.copy2(built, final)

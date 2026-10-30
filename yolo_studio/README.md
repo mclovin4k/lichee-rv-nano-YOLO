@@ -1,174 +1,291 @@
 # Lichee YOLO Studio
 
-Десктопная утилита (Linux, Python + PySide6) для полного цикла своей
-YOLO-модели под **LicheeRV Nano (cv181x)**:
+A desktop tool for **Linux and Windows** that covers the complete lifecycle of
+a custom YOLO model for the **LicheeRV Nano (cv181x)**:
 
-1. **Съёмка датасета с камеры платы** — по шагам-ракурсам, с удержанием
-   объекта в кадре и автоматическим сохранением кадров.
-2. **Разметка** — рисуете рамку на ключевом кадре, утилита переносит её на
-   следующие кадры оптическим потоком (полуавтомат).
-3. **Обучение** — локально на CPU (медленно) или импорт готового `.pt`.
-4. **Сборка** — экспорт ONNX с шестью «сырыми» выходами → INT8-калибровка
-   tpu-mlir → `.cvimodel` для cv181x.
-5. **Интеграция** — заливка модели на плату по SSH в `/root/models/` и
-   добавление в конец меню `start_stream.sh`.
+1. **Dataset import or capture** — import existing images, or capture frames
+   from the board camera with guided angle steps.
+2. **Labeling** — draw a box on a keyframe; the tool propagates it to the
+   following frames with optical flow (semi-automatic).
+3. **Training** — locally on CPU (slow) or by importing a ready-made `.pt`.
+4. **Build** — export ONNX with six "raw" outputs → INT8 calibration with
+   tpu-mlir → `.cvimodel` for cv181x.
+5. **Integration** — upload the model to the board over SSH into
+   `/root/models/` and append it to the `start_stream.sh` menu.
 
-## Требования
+## Ready-to-run builds
 
-**Хост (любой Linux):**
+The easiest option is a release build from
+[GitHub Releases](https://github.com/mclovin4k/lichee-rv-nano-YOLO/releases/latest);
+Python and Qt do not need to be installed.
 
-- Python 3.10+ (проверено на 3.13);
-- пакеты из `requirements.txt` (PySide6, OpenCV, numpy, paramiko, PyYAML);
-- для обучения: отдельное окружение с `ultralytics` + `torch` (CPU);
-- для конвертации: окружение `tpu-mlir` (Python 3.10) — скрипт
-  `tools/build_cvimodel.sh` и переменная `TPU_PY`.
+**Linux x86_64**
 
-**Плата:**
+```sh
+curl -fLO https://github.com/mclovin4k/lichee-rv-nano-YOLO/releases/latest/download/yolo_studio-linux-x86_64.tar.gz
+curl -fLO https://github.com/mclovin4k/lichee-rv-nano-YOLO/releases/latest/download/yolo_studio-linux-x86_64.tar.gz.sha256
+sha256sum -c yolo_studio-linux-x86_64.tar.gz.sha256
+tar -xzf yolo_studio-linux-x86_64.tar.gz
+chmod +x LicheeYOLOStudio
+./LicheeYOLOStudio
+```
 
-- прошивка с рабочим SSH (`root`), камерой и установленным пакетом
-  `/root/yolo_stream` (или старым `/root/start_stream.sh`);
-- `stream_yolo` из этого репозитория — с поддержкой `SY_HTTP_PORT` и
-  `SO_REUSEADDR` (нужны для съёмочного режима на отдельном порту);
-- `start_stream.sh` из `../yolo_stream/dist/board/` — с поддержкой
-  `/root/models/models.order`.
+The Linux build is made on Ubuntu 22.04 and needs glibc 2.35 or newer
+(Ubuntu 22.04+, Debian 12+, Fedora 36+, and similar). Qt's X11 plugins and the
+`libxcb-cursor.so.0` dependency are bundled. If a minimal system still reports
+that the xcb platform plugin cannot load, install the missing X11 libraries:
 
-## Установка
+```sh
+# Debian/Ubuntu
+sudo apt install libxcb-cursor0 libxkbcommon-x11-0 libxcb-icccm4 \
+    libxcb-image0 libxcb-keysyms1 libxcb-randr0 libxcb-render-util0 \
+    libxcb-shape0 libxcb-xinerama0 libxcb-xkb1 libxcb-util1
+# Fedora
+sudo dnf install xcb-util-cursor libxkbcommon-x11
+# Arch
+sudo pacman -S xcb-util-cursor libxkbcommon-x11
+```
+
+On Wayland, `QT_QPA_PLATFORM=wayland ./LicheeYOLOStudio` often works when the
+X11 backend does not.
+
+**Windows x86_64**
+
+Download and run `LicheeYOLOStudio.exe`. There is no installer. If Windows
+SmartScreen appears, choose **More info → Run anyway**.
+
+## Requirements
+
+**Host (Linux or Windows):**
+
+- for a release build: no Python installation;
+- for running from source: Python 3.10+ (tested on 3.13) and the packages from
+  `requirements.txt` (PySide6, OpenCV, numpy, paramiko, PyYAML);
+- for training: a separate environment with `ultralytics` + `torch` (CPU);
+- for conversion: a `tpu-mlir` environment (Python 3.10) — the
+  `tools/build_cvimodel.sh` script and the `TPU_PY` variable.
+
+**Board:**
+
+- firmware with working SSH (the default user is `root`), a camera and the
+  installed `/root/yolo_stream` package (or the legacy
+  `/root/start_stream.sh`);
+- `stream_yolo` from this repository — with `SY_HTTP_PORT` and `SO_REUSEADDR`
+  support (required for capture mode on a separate port);
+- `start_stream.sh` from `../yolo_stream/dist/board/` — with
+  `/root/models/models.order` support.
+
+## Running from source
+
+Linux:
 
 ```sh
 cd yolo_studio
-uv venv --python 3.13 .venv      # или: python3 -m venv .venv
+uv venv --python 3.13 .venv      # or: python3 -m venv .venv
 . .venv/bin/activate
-pip install -r requirements.txt
+uv pip install -r requirements.txt
 python app.py
 ```
 
-Пути к окружениям `ultra` (ultralytics) и `tpu310` (tpu-mlir), IP платы и
-пароль задаются в **Настройки…**.
+`./run.sh` does the same: it selects `.venv/bin/python` when present and checks
+the Linux Qt/X11 dependency before starting.
 
-## Быстрый старт
+Windows (PowerShell or `cmd.exe`):
 
-1. **Съёмка → Новый…** — имя датасета и имена классов через запятую
-   (например, `drone` или `drone, person`). Порядок классов = их id:
-   первый — 0, второй — 1.
-2. **Чистый поток** — утилита по SSH останавливает поток yolo на плате и
-   поднимает поток без детекции и рамок на порту `7778`.
-3. **Подключить камеру** — в окне появляется живое видео.
-4. Выберите шаг («Спереди», «Слева», …) и нажмите **Начать шаг**.
-   Пока идёт отсчёт, кадры сохраняются ~4–5 раз в секунду; мутные и
-   почти одинаковые отбрасываются.
-5. После сценария — **Вернуть yolo**: обычный поток с детекцией снова
-   поднимается на `:7777`.
-6. **Разметка** — выберите класс рамки в списке, нарисуйте рамку на первом
-   кадре эпизода и нажмите **Трекинг вперёд →**. Рамки перенесутся на
-   следующие кадры; ошибки можно поправить мышью. Delete удаляет выбранную
-   рамку, смена класса перекрашивает выбранную рамку.
-7. **Модель** — проверьте список классов в поле **Классы** (его можно
-   поменять и здесь, и на вкладке «Съёмка»), затем **Подготовить датасет**
-   (train/val 80/20 + до 200 кадров на калибровку). Дальше либо
-   **Импорт готового .pt…**, либо **Обучить на CPU**, затем
-   **Экспорт ONNX** и **Собрать cvimodel**.
-8. **Плата** — **Проверить связь**, выбрать `.cvimodel`, **Залить на плату**.
-   Модель окажется в `/root/models/` и в конце меню `start_stream.sh`;
-   кнопка **Запустить выбранную** сразу перезапустит поток с ней.
+```bat
+cd yolo_studio
+py -3.12 -m venv .venv
+.venv\Scripts\activate
+python -m pip install -r requirements.txt
+python app.py
+```
 
-При сборке рядом с `.cvimodel` создаётся `<имя>.names` (по одному классу
-в строке). Он заливается вместе с моделью, и `stream_yolo` подписывает
-рамки именами классов (`person 0.83`) вместо `class:1`.
+The paths to the `ultra` (ultralytics) and `tpu310` (tpu-mlir) environments,
+the board IP, SSH user and password are configured in **Settings…**.
 
-## Как это устроено
+## Quick start
 
-### Съёмочный режим
+1. **Capture → New…** — dataset name and comma-separated class names (for
+   example, `drone` or `drone, person`). The class order defines their ids:
+   the first is 0, the second is 1. If the data already exists, use
+   **Import images from folder…** instead (see below).
+2. **Clean stream** — the tool stops the YOLO stream on the board over SSH
+   and starts a stream without detection or boxes on port `7778`.
+3. **Connect camera** — live video appears in the window.
+4. Choose a step ("Front", "Left", …) and click **Start step**. While the
+   countdown runs, frames are saved at ~4–5 per second; blurry and nearly
+   identical frames are discarded.
+5. After the scenario, click **Restore YOLO**: the normal stream with
+   detection comes back on `:7777`.
+6. **Labeling** — select the box class in the list, draw a box on the first
+   frame of the episode, and click **Track forward →**. The boxes are
+   propagated to the following frames; mistakes can be fixed with the mouse.
+   Delete removes the selected box; changing the class recolors the selected
+   box.
+7. **Model** — check the class list in the **Classes** field (it can be
+   edited both here and on the Capture tab), then **Prepare dataset**
+   (train/val 80/20 + up to 200 frames for calibration). Next, either
+   **Import ready .pt…** or **Train on CPU**, then **Export ONNX** and
+   **Build cvimodel**.
+8. **Board** — **Check connection**, select the `.cvimodel`, and click
+   **Upload to board**. The model ends up in `/root/models/` and at the end of
+   the `start_stream.sh` menu; the **Start selected** button immediately
+   restarts the stream with it.
 
-Обычный поток платы рисует рамки и грузит TPU. Для датасета нужны чистые
-кадры, поэтому утилита запускает второй режим:
+During the build, a `<name>.names` file is created next to the `.cvimodel`
+(one class per line). It is uploaded together with the model, and
+`stream_yolo` labels boxes with class names (`person 0.83`) instead of
+`class:1`.
+
+## Importing an existing dataset
+
+You do not have to capture frames from the board. On the **Capture** tab:
+
+1. create a dataset and set its class names, or open an existing one;
+2. choose **Import size** — `keep` preserves the original resolution, while
+   `640x480` (any `WIDTHxHEIGHT`) letterboxes images into that size with gray
+   padding;
+3. click **Import images from folder…** and select a folder.
+
+The importer scans the folder recursively and accepts JPEG, PNG and BMP
+images. It copies them into `images/` as `frame_XXXXX.jpg`. A YOLO `.txt`
+label is imported when it is next to the image or in the sibling `labels/`
+directory (the usual `images/` + `labels/` layout). Images without labels are
+imported too and can be labeled in the **Label** tab. Progress and any skipped
+files are shown on the page.
+
+Class ids are remapped by name when the source folder contains a
+`data.yaml`/`data.yml` or `classes.txt`/`obj.names`/`names.txt`: names are
+merged into the dataset class list, so a source class 1 that is `car` remains
+`car` even if it becomes id 3 in the destination. Without a class list, YOLO
+ids are used as-is and the class list is extended with `class_N` names when
+needed. Label coordinates are transformed together with the image when an
+import size is selected.
+
+## How it works
+
+### Capture mode
+
+The normal board stream draws boxes and loads the TPU. Datasets need clean
+frames, so the tool starts a second mode:
 
 ```sh
 SY_DET=0 SY_DRAW=0 SY_HTTP_PORT=7778 /root/yolo_stream/start_stream.sh auto
 ```
 
-`SY_DET=0` отключает инференс, `SY_DRAW=0` — отрисовку, `SY_HTTP_PORT`
-переносит MJPEG на 7778, чтобы не конфликтовать с обычным потоком.
-Съёмка идёт через OpenCV (`cv2.VideoCapture` MJPEG), кадры — 960×540.
+`SY_DET=0` disables inference, `SY_DRAW=0` disables drawing, and
+`SY_HTTP_PORT` moves MJPEG to 7778 so it does not conflict with the normal
+stream. Capture goes through OpenCV (`cv2.VideoCapture` MJPEG), the frames are
+960×540.
 
-### Датасет
+### Dataset
 
 ```
-<датасет>/
-  dataset.json        класс, дата создания
-  images/             исходные кадры (frame_00001.jpg …)
-  labels/             YOLO-txt с тем же именем
-  calib/              кадры для INT8-калибровки
+<dataset>/
+  dataset.json        classes, creation date
+  images/             source frames (frame_00001.jpg …)
+  labels/             YOLO txt files with the same names
+  calib/              frames for INT8 calibration
   model/              best.pt / best.onnx / *.cvimodel / build/
-  images/train|val/   сплит для ultralytics
+  images/train|val/   split for ultralytics
   labels/train|val/
   data.yaml
 ```
 
-В датасете может быть один или несколько классов; их порядок задаёт id
-(0, 1, …). Рамок на кадре может быть несколько, в том числе разных классов.
-Список классов задаётся при создании датасета и редактируется на вкладках
-«Съёмка» и «Модель»; при изменении обновляются `dataset.json` и `data.yaml`
-(если сплит уже готов). При разметке класс выбирается в списке справа;
-трекинг сохраняет класс каждой рамки.
+A dataset can contain one or several classes; their order defines the id
+(0, 1, …). A frame can contain several boxes, including boxes of different
+classes. The class list is defined when the dataset is created and can be
+edited on the Capture and Model tabs; when it changes, `dataset.json` and
+`data.yaml` are updated (if the split already exists). When labeling, the
+class is selected in the list on the right; tracking preserves the class of
+each box.
 
-### Трекинг
+### Tracking
 
-`goodFeaturesToTrack` внутри рамки + `calcOpticalFlowPyrLK` между кадрами;
-смещение — медиана по удержанным точкам, масштаб — по разбросу точек.
-Если точек мало или скачок слишком большой, рамка остаётся на месте, а
-после трёх таких кадров подряд трекинг останавливается с предупреждением.
+`goodFeaturesToTrack` inside the box + `calcOpticalFlowPyrLK` between frames;
+the translation is the median over the retained points, and the scale comes
+from the spread of the points. If there are too few points or the jump is too
+large, the box stays in place, and after three such frames in a row tracking
+stops with a warning.
 
-### Сборка модели
+### Model build
 
-- `tools/export_yolo11.py` — экспорт `.pt` в ONNX с шестью выходами
-  (`box8/16/32`, `cls8/16/32`) — формат, который декодирует `yolo8.c`
-  на плате;
+- `tools/export_yolo11.py` — exports `.pt` to ONNX with six outputs
+  (`box8/16/32`, `cls8/16/32`) — the format that `yolo8.c` decodes on the
+  board;
 - `tools/build_cvimodel.sh` — `model_transform.py` → `run_calibration.py`
   (INT8, KL) → `model_deploy.py --chip cv181x`;
-- имя по умолчанию: `yolov11n_det_<класс>_<imgsz>_<imgsz>_INT8_cv181x.cvimodel`.
+- default name: `yolov11n_det_<class>_<imgsz>_<imgsz>_INT8_cv181x.cvimodel`.
 
-`imgsz` экспорта и конвертации должен совпадать (поле `imgsz` на странице
-«Модель»). Калибровка использует кадры из `calib/` (до 200).
+The `imgsz` used for export and conversion must match (the `imgsz` field on
+the Model page). Calibration uses frames from `calib/` (up to 200).
 
-### Плата
+### Board
 
-- заливка: SFTP в `/root/models/`;
-- имя модели дописывается в `/root/models/models.order`; `start_stream.sh`
-  печатает такие модели в конце меню (поэтому новая — последняя);
-- запуск: `/root/yolo_stream/start_stream.sh <имя>` (скрипт сам останавливает
-  прошлый поток и поднимает новый; старый путь `/root/start_stream.sh` тоже
-  поддерживается);
-- «Вернуть auto-поток» — `/root/yolo_stream/start_stream.sh auto` (модель по
-  умолчанию, обычно coco80).
+- upload: SFTP to `/root/models/`;
+- the model name is appended to `/root/models/models.order`;
+  `start_stream.sh` prints such models at the end of the menu (so the new one
+  is last);
+- start: `/root/yolo_stream/start_stream.sh <name>` (the script stops the
+  previous stream and starts a new one; the legacy
+  `/root/start_stream.sh` path is also supported);
+- "Restore auto stream" — `/root/yolo_stream/start_stream.sh auto` (the
+  default model, usually coco80).
 
-## Ограничения
+## Building standalone executables
 
-- Разметка полуавтоматическая: трекинг хорошо работает при плавном
-  движении/повороте; при резкой смене ракурса рамку нужно поправить.
-- Локальное обучение на CPU медленное — для реальных датасетов лучше
-  обучать на GPU (Colab) и импортировать `best.pt`.
-- Базовая модель `yolo11n.pt` скачивается с GitHub; если сети нет, укажите
-  локальный `.pt` или `yolo11n.yaml` (обучение с нуля без скачивания).
-- Имена классов лучше не менять после обучения без переобучения модели;
-  при сокращении списка проверьте, что в метках не осталось старых id.
-- Для съёмочного режима нужен `stream_yolo` с `SY_HTTP_PORT`; на старой
-  прошивке поток останется на 7777 (утилита сообщит, что порт не отвечает).
-- При съёмке камера занята потоком платы: yolo на это время
-  останавливается и возвращается кнопкой «Вернуть yolo» (или перезагрузкой).
+PyInstaller cannot cross-compile: build the Linux executable on Linux and the
+Windows `.exe` on Windows. Install the runtime dependencies and PyInstaller,
+then run the build script:
 
-## Структура
+```sh
+cd yolo_studio
+python -m pip install -r requirements.txt pyinstaller
+python tools/build_desktop.py
+```
+
+The result is `dist/LicheeYOLOStudio` (Linux) or
+`dist/LicheeYOLOStudio.exe` (Windows). On Linux, install the xcb development/
+runtime packages listed above first; the script copies those libraries into
+the one-file bundle. The build script also adds `yaml` and `paramiko` as
+hidden imports and excludes unused Qt bindings.
+
+GitHub Actions builds both executables on every push and attaches them to a
+release for `v*` tags. The workflow runs an offscreen `--smoke-test` on both
+platforms before uploading.
+
+## Limitations
+
+- Labeling is semi-automatic: tracking works well with smooth motion and
+  rotation; when the viewpoint changes abruptly, the box has to be fixed
+  manually.
+- Local CPU training is slow — for real datasets, train on a GPU (Colab) and
+  import `best.pt`.
+- The base `yolo11n.pt` model is downloaded from GitHub; if there is no
+  network, specify a local `.pt` or `yolo11n.yaml` (training from scratch
+  without downloading).
+- Do not rename classes after training without retraining the model; when
+  shortening the list, check that the labels contain no old ids.
+- Capture mode requires `stream_yolo` with `SY_HTTP_PORT`; on old firmware the
+  stream stays on 7777 (the tool will report that the port does not respond).
+- During capture the camera is busy with the board stream: YOLO is stopped for
+  that time and comes back with the "Restore YOLO" button (or a reboot).
+
+## Structure
 
 ```
-app.py                  вход
+app.py                  entry point, Linux Qt preflight, --smoke-test
+run.sh                  Linux launcher with an xcb dependency check
 studio/
-  config.py             настройки (~/.config/yolo-studio/config.json)
-  board.py              SSH/SFTP, режимы потока, models.order
-  camera.py             MJPEG/USB-источник кадров (QThread)
-  dataset.py            кадры, YOLO-разметка, сплит, калибровка
-  tracking.py           оптический поток
-  pipeline.py           обучение, ONNX, tpu-mlir
-  ui/                   окно и страницы (съёмка/разметка/модель/плата)
+  config.py             settings (~/.config/yolo-studio/config.json)
+  board.py              SSH/SFTP, stream modes, models.order
+  camera.py             MJPEG/USB frame source (QThread)
+  dataset.py            frames, import, YOLO labels, split, calibration
+  tracking.py           optical flow
+  pipeline.py           training, ONNX, tpu-mlir
+  ui/                   window and pages (capture/label/model/board)
 tools/
-  export_yolo11.py      .pt → 6-выходный ONNX
-  build_cvimodel.sh     ONNX → cvimodel cv181x
+  export_yolo11.py      .pt → 6-output ONNX
+  build_cvimodel.sh     ONNX → cv181x cvimodel
+  build_desktop.py      PyInstaller Linux/Windows one-file build
 ```

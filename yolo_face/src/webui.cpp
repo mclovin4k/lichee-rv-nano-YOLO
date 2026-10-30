@@ -67,11 +67,11 @@ std::string form_field(const std::string &body, const char *key) {
 }
 
 const char *kPage = R"HTML(<!doctype html>
-<html lang="ru">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Лица — LicheeRV Nano</title>
+<title>Faces — LicheeRV Nano</title>
 <style>
 :root{color-scheme:dark}
 *{box-sizing:border-box}
@@ -106,29 +106,29 @@ button.primary:disabled{opacity:.5;cursor:default}
 </head>
 <body>
 <div class="wrap">
-  <div class="video"><img src="/stream" alt="Видеопоток"></div>
+  <div class="video"><img src="/stream" alt="Video stream"></div>
   <aside class="side">
     <div class="card">
-      <h1><span class="dot"></span>Распознавание лиц</h1>
+      <h1><span class="dot"></span>Face recognition</h1>
       <div class="hint">LicheeRV Nano · SCRFD + cviface</div>
     </div>
     <div class="card">
-      <h2>Люди</h2>
-      <div id="people" class="people"><span class="empty">загрузка…</span></div>
+      <h2>People</h2>
+      <div id="people" class="people"><span class="empty">loading…</span></div>
     </div>
     <div class="card">
-      <h2>Живость (автоматически)</h2>
-      <div id="live" class="status">ждём лицо в кадре</div>
-      <div class="hint" style="margin-top:8px">Плата сама отличает человека от фото: человек моргает (это видно по глазам), фотография — никогда. Ничего делать не нужно, просто смотрите в камеру пару секунд.</div>
+      <h2>Liveness (automatic)</h2>
+      <div id="live" class="status">waiting for a face</div>
+      <div class="hint" style="margin-top:8px">The board tells a live person from a photo by itself: a person blinks (visible in the eyes), a photo never does. Nothing to do — just look at the camera for a couple of seconds.</div>
     </div>
     <div class="card">
-      <h2>Запомнить человека</h2>
+      <h2>Remember a person</h2>
       <form id="f">
-        <input id="name" placeholder="Имя" maxlength="40" autocomplete="off" required>
-        <button id="btn" class="primary" type="submit">Запомнить</button>
+        <input id="name" placeholder="Name" maxlength="40" autocomplete="off" required>
+        <button id="btn" class="primary" type="submit">Remember</button>
       </form>
       <div id="status" class="status"></div>
-      <div class="hint" style="margin-top:8px">Встаньте в кадр так, чтобы лицо было крупно и освещено; плата запомнит несколько кадров.</div>
+      <div class="hint" style="margin-top:8px">Stand in frame so the face is large and well lit; the board will remember several frames.</div>
     </div>
   </aside>
 </div>
@@ -140,19 +140,19 @@ async function loadPeople(){
     const r=await fetch('/api/faces',{cache:'no-store'});
     const j=await r.json();
     box.innerHTML='';
-    if(!j.people.length){box.innerHTML='<span class="empty">пока никого</span>';return;}
+    if(!j.people.length){box.innerHTML='<span class="empty">nobody yet</span>';return;}
     for(const name of j.people){
       const el=document.createElement('span');el.className='chip';
       const t=document.createElement('span');t.textContent=name;el.appendChild(t);
-      const b=document.createElement('button');b.type='button';b.textContent='×';b.title='удалить';
+      const b=document.createElement('button');b.type='button';b.textContent='×';b.title='delete';
       b.onclick=async()=>{
-        if(!confirm('Удалить «'+name+'»?'))return;
+        if(!confirm('Delete "'+name+'"?'))return;
         await fetch('/api/delete',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'name='+encodeURIComponent(name)});
         loadPeople();
       };
       el.appendChild(b);box.appendChild(el);
     }
-  }catch(e){box.innerHTML='<span class="empty">нет связи с платой</span>';}
+  }catch(e){box.innerHTML='<span class="empty">no connection to the board</span>';}
 }
 async function poll(){
   const el=q('#status');
@@ -160,13 +160,13 @@ async function poll(){
     const r=await fetch('/api/status',{cache:'no-store'});
     const j=await r.json();
     if(j.state==='collecting'){
-      el.textContent='Смотрите в камеру… '+j.progress+'%';el.className='status wait';
+      el.textContent='Look at the camera… '+j.progress+'%';el.className='status wait';
       setTimeout(poll,400);return;
     }
-    if(j.state==='done'){el.textContent='Готово: '+j.name;el.className='status ok';q('#btn').disabled=false;loadPeople();}
-    else if(j.state==='error'){el.textContent=j.msg||'не удалось';el.className='status err';q('#btn').disabled=false;}
+    if(j.state==='done'){el.textContent='Done: '+j.name;el.className='status ok';q('#btn').disabled=false;loadPeople();}
+    else if(j.state==='error'){el.textContent=j.msg||'failed';el.className='status err';q('#btn').disabled=false;}
     else{el.textContent='';el.className='status';q('#btn').disabled=false;}
-  }catch(e){el.textContent='нет связи';el.className='status err';q('#btn').disabled=false;}
+  }catch(e){el.textContent='no connection';el.className='status err';q('#btn').disabled=false;}
 }
 q('#f').addEventListener('submit',async ev=>{
   ev.preventDefault();
@@ -175,21 +175,21 @@ q('#f').addEventListener('submit',async ev=>{
   try{
     const r=await fetch('/api/enroll',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'name='+encodeURIComponent(name)});
     const j=await r.json();
-    if(!j.ok){st.textContent=j.error||'ошибка';st.className='status err';q('#btn').disabled=false;return;}
-    st.textContent='Смотрите в камеру…';st.className='status wait';
+    if(!j.ok){st.textContent=j.error||'error';st.className='status err';q('#btn').disabled=false;return;}
+    st.textContent='Look at the camera…';st.className='status wait';
     q('#name').value='';
     poll();
-  }catch(e){st.textContent='нет связи';st.className='status err';q('#btn').disabled=false;}
+  }catch(e){st.textContent='no connection';st.className='status err';q('#btn').disabled=false;}
 });
 async function pollLive(){
   const el=q('#live');
   try{
     const r=await fetch('/api/liveness',{cache:'no-store'});
     const j=await r.json();
-    if(j.state==='ok'){el.textContent=j.msg||'человек';el.className='status ok';}
-    else if(j.state==='photo'){el.textContent=j.msg||'похоже на фото';el.className='status err';}
-    else{el.textContent=j.msg||'проверяю лицо…';el.className='status';}
-  }catch(e){el.textContent='нет связи';el.className='status err';}
+    if(j.state==='ok'){el.textContent=j.msg||'person';el.className='status ok';}
+    else if(j.state==='photo'){el.textContent=j.msg||'looks like a photo';el.className='status err';}
+    else{el.textContent=j.msg||'checking face…';el.className='status';}
+  }catch(e){el.textContent='no connection';el.className='status err';}
   setTimeout(pollLive,700);
 }
 loadPeople();
@@ -219,12 +219,12 @@ std::string web_handle(const std::string &method, const std::string &path,
     if (path == "/api/enroll") {
         if (method != "POST") return http_resp("405 Method Not Allowed", "application/json", "{\"ok\":false}");
         std::string name = form_field(body, "name");
-        if (name.empty()) return json_resp("{\"ok\":false,\"error\":\"пустое имя\"}");
+        if (name.empty()) return json_resp("{\"ok\":false,\"error\":\"empty name\"}");
         int rc = face_enroll_begin(name.c_str());
-        if (rc == -1) return json_resp("{\"ok\":false,\"error\":\"недопустимое имя\"}");
-        if (rc == -2) return json_resp("{\"ok\":false,\"error\":\"регистрация уже идёт\"}");
+        if (rc == -1) return json_resp("{\"ok\":false,\"error\":\"invalid name\"}");
+        if (rc == -2) return json_resp("{\"ok\":false,\"error\":\"registration already in progress\"}");
         if (rc == -3)
-            return json_resp("{\"ok\":false,\"error\":\"подождите пару секунд: идёт проверка лица\"}");
+            return json_resp("{\"ok\":false,\"error\":\"wait a couple of seconds: face check in progress\"}");
         return json_resp("{\"ok\":true}");
     }
     if (path == "/api/liveness") {
@@ -241,8 +241,8 @@ std::string web_handle(const std::string &method, const std::string &path,
     if (path == "/api/delete") {
         if (method != "POST") return http_resp("405 Method Not Allowed", "application/json", "{\"ok\":false}");
         std::string name = form_field(body, "name");
-        if (name.empty()) return json_resp("{\"ok\":false,\"error\":\"пустое имя\"}");
-        if (face_delete(name.c_str()) != 0) return json_resp("{\"ok\":false,\"error\":\"недопустимое имя\"}");
+        if (name.empty()) return json_resp("{\"ok\":false,\"error\":\"empty name\"}");
+        if (face_delete(name.c_str()) != 0) return json_resp("{\"ok\":false,\"error\":\"invalid name\"}");
         return json_resp("{\"ok\":true}");
     }
     return std::string();

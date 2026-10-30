@@ -1,11 +1,11 @@
 #!/bin/sh
-# Сборка cvimodel cv181x (INT8) из 6-выходного ONNX.
+# Build a cv181x (INT8) cvimodel from a 6-output ONNX model.
 # usage: build_cvimodel.sh <model.onnx> <calib_dir> [<test.jpg>]
-# env:   TPU_PY=<python venv-а tpu-mlir> (по умолчанию ~/.venvs/tpu310/bin/python)
-#        NAME=<базовое имя выходов>        (по умолчанию model)
-#        OUT=<имя .cvimodel>               (по умолчанию model.cvimodel)
-#        IMGSZ=<сторона входа>             (по умолчанию 640)
-#        CALIB_NUM=<кадров калибровки>     (по умолчанию 200)
+# env:   TPU_PY=<python from the tpu-mlir venv> (default: ~/.venvs/tpu310/bin/python)
+#        NAME=<base output name>          (default: model)
+#        OUT=<.cvimodel name>             (default: model.cvimodel)
+#        IMGSZ=<input side>               (default: 640)
+#        CALIB_NUM=<calibration frames>   (default: 200)
 set -e
 
 ONNX=${1:?usage: build_cvimodel.sh model.onnx calib_dir [test.jpg]}
@@ -20,9 +20,9 @@ CALIB_NUM=${CALIB_NUM:-200}
 if [ -z "$TEST" ]; then
     TEST=$(find "$CALIB" -type f \( -name '*.jpg' -o -name '*.jpeg' -o -name '*.png' \) | head -1)
 fi
-[ -n "$TEST" ] || { echo "нет тестового кадра в $CALIB"; exit 1; }
+[ -n "$TEST" ] || { echo "no test frame in $CALIB"; exit 1; }
 
-# tpu-mlir зовёт свои утилиты через PATH — venv впереди
+# tpu-mlir invokes its tools through PATH — put the venv first
 PATH=$(dirname "$V"):$PATH
 export PATH
 
@@ -44,4 +44,4 @@ model_deploy.py --mlir "$NAME.mlir" --chip cv181x --quantize INT8 \
     --tolerance 0.85,0.45 \
     --model "$OUT"
 
-echo "готово: $OUT"
+echo "done: $OUT"

@@ -1,4 +1,4 @@
-"""Диалог настроек."""
+"""Settings dialog."""
 
 from __future__ import annotations
 
@@ -16,31 +16,31 @@ class SettingsDialog(QDialog):
     def __init__(self, cfg: Config, parent=None) -> None:
         super().__init__(parent)
         self.cfg = cfg
-        self.setWindowTitle("Настройки")
+        self.setWindowTitle("Settings")
         self.setMinimumWidth(620)
         form = QFormLayout(self)
 
         self.ip = QLineEdit(str(cfg.get("board_ip")))
-        form.addRow("IP платы:", self.ip)
+        form.addRow("Board IP:", self.ip)
         self.user = QLineEdit(str(cfg.get("board_user")))
-        form.addRow("Пользователь:", self.user)
+        form.addRow("User:", self.user)
         self.password = QLineEdit(str(cfg.get("board_password")))
         self.password.setEchoMode(QLineEdit.EchoMode.Password)
-        form.addRow("Пароль:", self.password)
+        form.addRow("Password:", self.password)
         self.stream_port = QSpinBox()
         self.stream_port.setRange(1, 65535)
         self.stream_port.setValue(int(cfg.get("stream_port", 7777)))
-        form.addRow("Порт обычного потока:", self.stream_port)
+        form.addRow("Normal stream port:", self.stream_port)
         self.capture_port = QSpinBox()
         self.capture_port.setRange(1, 65535)
         self.capture_port.setValue(int(cfg.get("capture_port", 7778)))
-        form.addRow("Порт съёмочного потока:", self.capture_port)
+        form.addRow("Capture stream port:", self.capture_port)
 
         self.ultra = self._path_row(form, "Python Ultralytics:", "ultra_python",
                                     file_mode=True)
         self.tpu = self._path_row(form, "Python tpu-mlir:", "tpu_python",
                                   file_mode=True)
-        self.datasets = self._path_row(form, "Каталог датасетов:", "dataset_root",
+        self.datasets = self._path_row(form, "Datasets directory:", "dataset_root",
                                        file_mode=False)
 
         note = QWidget()

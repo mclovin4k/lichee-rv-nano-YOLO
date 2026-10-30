@@ -140,8 +140,8 @@ public:
         if (sock != INVALID_SOCKET)
         {
             int yes = 1;
-            /* TIME_WAIT прошлого экземпляра (face/yolo) не должен мешать
-               новому процессу занять порт. */
+            /* TIME_WAIT from the previous instance (face/yolo) must not
+               prevent a new process from taking the port. */
             setsockopt(sock, SOL_SOCKET, SO_REUSEADDR,
                        (const char*)&yes, sizeof(yes));
         }

@@ -1,11 +1,11 @@
-/* RGB-канал VPSS для TDL: группа 0, канал 1 (канал 0 занят потоком NV21).
-   Поворот канала VPSS на этой прошивке запрещён (ILLEGAL_PARAM), поэтому кадр
-   для TDL поворачивается в софте в отдельном VB-пуле.
+/* RGB VPSS channel for TDL: group 0, channel 1 (channel 0 is used by the NV21
+   stream). VPSS channel rotation is forbidden on this firmware (ILLEGAL_PARAM),
+   so the TDL frame is rotated in software into a dedicated VB pool.
 
-   Устройство повторяет рабочий vpss_det.c: собственный VB-пул (3 блока по
-   кадру), отдельный поток-дренажёр, который всегда забирает кадры из канала
-   и держит самый свежий в однокадровом «почтовом ящике». Без дренажёра
-   заполненная очередь канала тормозит всю группу VPSS и вместе с ней поток. */
+   The design follows the working vpss_det.c: a dedicated VB pool (3 frame-sized
+   blocks), a separate drain thread that always takes frames from the channel and
+   keeps the freshest one in a single-frame "mailbox". Without the drain thread a
+   full channel queue slows down the whole VPSS group and the stream with it. */
 
 #include "vpss_face.h"
 
@@ -38,10 +38,10 @@ static CVI_S32 (*p_SetChnRotation)(VPSS_GRP, VPSS_CHN, ROTATION_E);
 static VB_POOL face_pool = VB_INVALID_POOLID;
 static int face_open_flag = 0;
 
-/* VPSS/VI работают с системной libvpu.so (она согласована с драйвером этой
-   прошивки).  Патченная middleware-сборка нужна только TDL, её грузит
-   face_pipeline.c через SY_VPU_LIB.  Ищем libvpu обычным порядком:
-   LD_LIBRARY_PATH, затем системные каталоги. */
+/* VPSS/VI use the system libvpu.so (it matches this firmware's driver). The
+   patched middleware build is needed only by TDL, and face_pipeline.c loads it
+   through SY_VPU_LIB. Look for libvpu in the usual order: LD_LIBRARY_PATH,
+   then the system directories. */
 static void *vpu_dlopen(int flags) {
     void *lib = dlopen("libvpu.so", flags);
     if (lib == NULL) lib = dlopen("/mnt/system/usr/lib/libvpu.so", flags);
@@ -49,7 +49,7 @@ static void *vpu_dlopen(int flags) {
     return lib;
 }
 
-/* Пул под повёрнутый кадр (TDL принимает кадр с физическим адресом). */
+/* Pool for the rotated frame (TDL accepts a frame with a physical address). */
 static VB_POOL rot_pool = VB_INVALID_POOLID;
 static uint32_t rot_blk_size = 0;
 static int g_rot_angle = 0;
@@ -74,7 +74,7 @@ static void *drain_main(void *arg) {
 
         if (!logged) {
             logged = 1;
-            printf("vpss_face: кадр %ux%u fmt=%d stride=%u vir=%p\n", fi.stVFrame.u32Width,
+            printf("vpss_face: frame %ux%u fmt=%d stride=%u vir=%p\n", fi.stVFrame.u32Width,
                    fi.stVFrame.u32Height, (int)fi.stVFrame.enPixelFormat,
                    fi.stVFrame.u32Stride[0], fi.stVFrame.pu8VirAddr[0]);
             fflush(stdout);
@@ -93,7 +93,7 @@ static void *drain_main(void *arg) {
         {
             static int n_store = 0;
             if (++n_store <= 3) {
-                printf("vpss_face: кадр %d в слоте\n", n_store);
+                printf("vpss_face: frame %d in the slot\n", n_store);
                 fflush(stdout);
             }
         }
@@ -105,7 +105,7 @@ static void *drain_main(void *arg) {
     do {                                                         \
         *(void **)(&fp) = dlsym(vpss_lib, sym);                  \
         if ((fp) == NULL) {                                      \
-            fprintf(stderr, "vpss_face: нет %s в libvpu\n", sym); \
+            fprintf(stderr, "vpss_face: %s is missing in libvpu\n", sym); \
             return -1;                                           \
         }                                                        \
     } while (0)
@@ -117,7 +117,7 @@ int vpss_face_open(int src_w_arg, int src_h_arg, int rot) {
 
     vpss_lib = vpu_dlopen(RTLD_NOW | RTLD_LOCAL);
     if (vpss_lib == NULL) {
-        fprintf(stderr, "vpss_face: libvpu.so не загрузилась (%s)\n", dlerror());
+        fprintf(stderr, "vpss_face: libvpu.so failed to load (%s)\n", dlerror());
         return -1;
     }
 
@@ -132,21 +132,21 @@ int vpss_face_open(int src_w_arg, int src_h_arg, int rot) {
 
     VB_POOL_CONFIG_S cfg;
     memset(&cfg, 0, sizeof(cfg));
-    /* +64КБ на выравнивание строк (повёрнутый кадр шире исходного). */
+    /* +64KB for row alignment (the rotated frame is wider than the source). */
     cfg.u32BlkSize = (CVI_U32)src_w * (CVI_U32)src_h * 3 + (64u * 1024u);
     cfg.u32BlkCnt = 3;
     cfg.enRemapMode = VB_REMAP_MODE_NONE;
     face_pool = CVI_VB_CreatePool(&cfg);
     if (face_pool == VB_INVALID_POOLID) {
-        fprintf(stderr, "vpss_face: CVI_VB_CreatePool(%u x3) не удался\n",
+        fprintf(stderr, "vpss_face: CVI_VB_CreatePool(%u x3) failed\n",
                 (unsigned)cfg.u32BlkSize);
         return -1;
     }
 
-    /* Перебираем варианты: эта сборка VPSS отвергает часть полей, а поворот
-       принимает не во всех последовательностях вызовов.
-       бит0 — глубина очереди канала, бит1 — поворот до EnableChn,
-       бит2 — в атрибутах канала уже перевёрнутые размеры. */
+    /* Try variants: this VPSS build rejects some fields and accepts rotation
+       only in certain call sequences.
+       bit0 — channel queue depth, bit1 — rotation before EnableChn,
+       bit2 — the channel attributes already contain the swapped dimensions. */
     int ok = 0;
     for (int v = 0; v < 2 && !ok; v++) {
         const int depth_var = (v & 1);
@@ -165,17 +165,17 @@ int vpss_face_open(int src_w_arg, int src_h_arg, int rot) {
         a.stAspectRatio.enMode = ASPECT_RATIO_NONE;
 
         CVI_S32 ret = p_SetChnAttr(FACE_GRP, FACE_CHN, &a);
-        printf("vpss_face: вариант %d (depth=%d) SetChnAttr ret=0x%x\n", v, depth_var, ret);
+        printf("vpss_face: variant %d (depth=%d) SetChnAttr ret=0x%x\n", v, depth_var, ret);
         fflush(stdout);
         if (ret != CVI_SUCCESS) continue;
 
         if (p_EnableChn(FACE_GRP, FACE_CHN) != CVI_SUCCESS) {
-            printf("vpss_face: вариант %d EnableChn не удался\n", v);
+            printf("vpss_face: variant %d EnableChn failed\n", v);
             fflush(stdout);
             continue;
         }
         if (p_AttachVbPool(FACE_GRP, FACE_CHN, face_pool) != CVI_SUCCESS) {
-            printf("vpss_face: вариант %d AttachVbPool не удался\n", v);
+            printf("vpss_face: variant %d AttachVbPool failed\n", v);
             fflush(stdout);
             p_DisableChn(FACE_GRP, FACE_CHN);
             continue;
@@ -198,7 +198,7 @@ int vpss_face_open(int src_w_arg, int src_h_arg, int rot) {
         return -1;
     }
     face_open_flag = 1;
-    printf("vpss_face: канал RGB %dx%d открыт\n", src_w, src_h);
+    printf("vpss_face: RGB channel %dx%d opened\n", src_w, src_h);
     fflush(stdout);
 
     if (rot != 0) {
@@ -222,11 +222,11 @@ int vpss_face_open(int src_w_arg, int src_h_arg, int rot) {
         rcfg.enRemapMode = VB_REMAP_MODE_NONE;
         rot_pool = CVI_VB_CreatePool(&rcfg);
         if (rot_pool == VB_INVALID_POOLID) {
-            printf("vpss_face: не удалось создать пул под повёрнутый кадр\n");
+            printf("vpss_face: failed to create the rotated-frame pool\n");
             fflush(stdout);
             g_rot_angle = 0;
         } else {
-            printf("vpss_face: поворот %d -> %dx%d stride=%u\n", rot, g_dst_w, g_dst_h, g_dst_stride);
+            printf("vpss_face: rotation %d -> %dx%d stride=%u\n", rot, g_dst_w, g_dst_h, g_dst_stride);
             fflush(stdout);
         }
     }
@@ -258,14 +258,14 @@ int vpss_face_get(VIDEO_FRAME_INFO_S *fi, int timeout_ms) {
     if (!ok) {
         static int n_to = 0;
         if (++n_to <= 3) {
-            printf("vpss_face: get: таймаут (%d)\n", n_to);
+            printf("vpss_face: get: timeout (%d)\n", n_to);
             fflush(stdout);
         }
     }
     return ok ? 0 : -1;
 }
 
-/* Отображает кадр в память CPU для анализа пикселей (антиподделка). */
+/* Maps the frame into CPU memory for pixel analysis (anti-spoofing). */
 void *vpss_face_map(const VIDEO_FRAME_INFO_S *fi, uint32_t *len) {
     if (fi == NULL) return NULL;
     const VIDEO_FRAME_S *sf = &fi->stVFrame;
@@ -281,7 +281,7 @@ void vpss_face_unmap(void *p, uint32_t len) {
     if (p != NULL) CVI_SYS_Munmap(p, len);
 }
 
-/* Поворот на 90° по часовой: dst(x,y) = src(y, H-1-x). */
+/* 90° clockwise rotation: dst(x,y) = src(y, H-1-x). */
 static void rgb_rot_cw(const uint8_t *src, uint32_t sstride, int sw, int sh, uint8_t *dst,
                        uint32_t dstride) {
     for (int y = 0; y < sw; y++) {
@@ -296,7 +296,7 @@ static void rgb_rot_cw(const uint8_t *src, uint32_t sstride, int sw, int sh, uin
     }
 }
 
-/* Поворот на 90° против часовой: dst(x,y) = src(W-1-y, x). */
+/* 90° counter-clockwise rotation: dst(x,y) = src(W-1-y, x). */
 static void rgb_rot_ccw(const uint8_t *src, uint32_t sstride, int sw, int sh, uint8_t *dst,
                         uint32_t dstride) {
     for (int y = 0; y < sw; y++) {
@@ -311,7 +311,7 @@ static void rgb_rot_ccw(const uint8_t *src, uint32_t sstride, int sw, int sh, ui
     }
 }
 
-/* Поворот на 180°. */
+/* 180° rotation. */
 static void rgb_rot_180(const uint8_t *src, uint32_t sstride, int sw, int sh, uint8_t *dst,
                         uint32_t dstride) {
     for (int y = 0; y < sh; y++) {
@@ -326,8 +326,8 @@ static void rgb_rot_180(const uint8_t *src, uint32_t sstride, int sw, int sh, ui
     }
 }
 
-/* Кадр для TDL: повёрнутый (если задан поворот) в собственном VB-пуле.
-   Кадр держится до vpss_face_release_rot(). */
+/* Frame for TDL: rotated (if rotation is set) into a dedicated VB pool.
+   The frame is held until vpss_face_release_rot(). */
 int vpss_face_get_rot(VIDEO_FRAME_INFO_S *fi, int timeout_ms) {
     if (!face_open_flag || fi == NULL) return -1;
     VIDEO_FRAME_INFO_S src;
@@ -354,7 +354,7 @@ int vpss_face_get_rot(VIDEO_FRAME_INFO_S *fi, int timeout_ms) {
 
     VB_BLK blk = CVI_VB_GetBlock(rot_pool, rot_blk_size);
     if (blk == (VB_BLK)-1) {
-        printf("vpss_face: VB_GetBlock не удался (pool=%d size=%u)\n", (int)rot_pool,
+        printf("vpss_face: VB_GetBlock failed (pool=%d size=%u)\n", (int)rot_pool,
                (unsigned)rot_blk_size);
         fflush(stdout);
         if (mapped != NULL) CVI_SYS_Munmap(mapped, slen);
@@ -364,7 +364,7 @@ int vpss_face_get_rot(VIDEO_FRAME_INFO_S *fi, int timeout_ms) {
     const uint64_t dphy = CVI_VB_Handle2PhysAddr(blk);
     void *dvir = CVI_SYS_MmapCache(dphy, rot_blk_size);
     if (dvir == NULL) {
-        printf("vpss_face: mmap блока поворота не удался (phy=0x%llx)\n",
+        printf("vpss_face: mmap of the rotation block failed (phy=0x%llx)\n",
                (unsigned long long)dphy);
         fflush(stdout);
         CVI_VB_ReleaseBlock(blk);
@@ -421,7 +421,7 @@ int vpss_face_selftest(void) {
     void *lib = vpss_lib;
     if (lib == NULL) lib = vpu_dlopen(RTLD_NOW | RTLD_LOCAL);
     if (lib == NULL) {
-        printf("selftest: libvpu не загрузилась\n");
+        printf("selftest: libvpu failed to load\n");
         return -1;
     }
     typedef VPSS_GRP (*fn_avail_t)(void);
@@ -456,7 +456,7 @@ int vpss_face_selftest(void) {
     return 0;
 }
 
-/* Остановить группу и её канал (нужно перед DestroyGrp, иначе он виснет). */
+/* Stop the group and its channel (required before DestroyGrp, otherwise it hangs). */
 int vpss_face_stop_grp(int grp) {
     void *lib = vpss_lib;
     if (lib == NULL) lib = vpu_dlopen(RTLD_NOW | RTLD_LOCAL);
@@ -471,8 +471,8 @@ int vpss_face_stop_grp(int grp) {
     return rc;
 }
 
-/* Уничтожить VPSS-группу (TDL не делает этого при DestroyHandle — группа и её
-   VB-пул остаются в драйвере, и следующий запуск упирается в нехватку памяти). */
+/* Destroy the VPSS group (TDL does not do this in DestroyHandle — the group and
+   its VB pool stay in the driver, and the next start runs out of memory). */
 int vpss_face_destroy_grp(int grp) {
     void *lib = vpss_lib;
     if (lib == NULL) lib = vpu_dlopen(RTLD_NOW | RTLD_LOCAL);
@@ -483,7 +483,7 @@ int vpss_face_destroy_grp(int grp) {
     return (int)p_destroy_grp((VPSS_GRP)grp);
 }
 
-/* Группа свободна, если её можно создать (у занятой CreateGrp даёт EXIST). */
+/* A group is free if it can be created (CreateGrp returns EXIST for a busy one). */
 int vpss_face_group_free(int grp) {
     void *lib = vpss_lib;
     if (lib == NULL) lib = vpu_dlopen(RTLD_NOW | RTLD_LOCAL);

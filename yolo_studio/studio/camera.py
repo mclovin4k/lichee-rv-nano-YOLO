@@ -1,4 +1,4 @@
-"""Источник кадров: MJPEG с платы или локальная USB-камера."""
+"""Frame source: MJPEG from the board or a local USB camera."""
 
 from __future__ import annotations
 
@@ -39,16 +39,16 @@ class CameraThread(QThread):
             if self._cap is None:
                 cap = self._open()
                 if cap is None:
-                    self.status.emit("камера не открылась, пробую ещё…")
+                    self.status.emit("camera failed to open, retrying…")
                     time.sleep(1.0)
                     continue
                 self._cap = cap
-                self.status.emit("камера подключена")
+                self.status.emit("camera connected")
             ok, frame = self._cap.read()
             if not ok or frame is None:
                 misses += 1
                 if misses >= 5:
-                    self.status.emit("поток потерян, переподключение…")
+                    self.status.emit("stream lost, reconnecting…")
                     self._release()
                     misses = 0
                     time.sleep(0.6)

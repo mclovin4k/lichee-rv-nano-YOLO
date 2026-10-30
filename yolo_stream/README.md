@@ -1,170 +1,176 @@
-# stream_yolo — камера → NPU-детектор → MJPEG на LicheeRV Nano (SG2002/CV181x)
+# stream_yolo — camera → NPU detector → MJPEG on LicheeRV Nano (SG2002/CV181x)
 
-Поток MJPEG 960×540 @30 fps с рамками YOLOv8, посчитанными на NPU, и
-HTTP-сервером на порту 7777 для VLC/ffplay (разрешение задаёт `SY_HP="W H"`).
-Кадры не конвертируются в BGR и не копируются через `cv::Mat`: VPSS отдаёт
-NV21, и этот же буфер идёт и в аппаратный JPEG, и (копией с letterbox) в
-детектор. Изначально проект основан на
-[ret7020/LicheeRVNano](https://github.com/ret7020/LicheeRVNano); текущая
-реализация переписана (см. ниже).
+A 960×540 @30 fps MJPEG stream with YOLOv8 boxes computed on the NPU, plus an
+HTTP server on port 7777 for VLC/ffplay (the resolution is set by
+`SY_HP="W H"`). Frames are not converted to BGR and not copied through
+`cv::Mat`: VPSS outputs NV21, and the same buffer is used both by the hardware
+JPEG encoder and (via a letterboxed copy) by the detector. The project was
+originally based on
+[ret7020/LicheeRVNano](https://github.com/ret7020/LicheeRVNano); the current
+implementation has been rewritten (see below).
 
-## Состав
+## Contents
 
-| Что | Где |
+| Item | Location |
 |---|---|
-| Исходники | `main.cpp`, `yolo8.c`, `vpss_det.c`, `venc_jpeg.c`, `draw_nv21.c`, `MJPEGWriter.*` |
-| Готовый бинарь и runtime | `dist/board/stream_yolo`, `dist/board/runtime/` |
-| Модели | `dist/board/models/` |
-| Запуск/остановка | `dist/board/start_stream.sh`, `dist/board/run_stream.sh` |
-| Установщик по SSH | `install.sh` |
-| Сборка | `CMakeLists.txt`, `cmake/`, `scripts/`, `patches/` |
-| Контрольные суммы | `dist/md5sums.txt` |
+| Sources | `main.cpp`, `yolo8.c`, `vpss_det.c`, `venc_jpeg.c`, `draw_nv21.c`, `MJPEGWriter.*` |
+| Ready-to-run package | `yolo_stream-board.tar.gz` from Releases (binary, runtime, models, scripts) |
+| Runtime skeleton | `dist/board/runtime/` (vendor libraries and musl loader) |
+| Models | `dist/board/models/` |
+| Start/stop scripts | `dist/board/start_stream.sh`, `dist/board/run_stream.sh` |
+| SSH installer | `install.sh` (downloads the latest release by default) |
+| Build | `CMakeLists.txt`, `cmake/`, `scripts/`, `patches/`, `../scripts/package-board.sh` |
 
-## Архитектура
+## Architecture
 
 ```
-GC4653 (MIPI CSI; адрес на I2C и lane_id MIPI-пар — из /mnt/data/sensor_cfg.ini)
-  → VI (2560×1440)                     ─┐ ядро/RTOS, DDR
-  → VPSS гр.0, кан.0: crop/scale 960×540 (SY_HP), NV21 (fmt=19)
+GC4653 (MIPI CSI; I2C address and MIPI lane_id come from /mnt/data/sensor_cfg.ini)
+  → VI (2560×1440)                     ─┐ kernel/RTOS, DDR
+  → VPSS group 0, channel 0: crop/scale 960×540 (SY_HP), NV21 (fmt=19)
       │
-      ├─ [главный поток] рамки поверх Y/UV → CVI_SYS_IonFlushCache →
-      │                  VENC (PT_JPEG, кан.2) → MJPEGWriter :7777
+      ├─ [main stream] boxes drawn over Y/UV → CVI_SYS_IonFlushCache →
+      │                VENC (PT_JPEG, channel 2) → MJPEGWriter :7777
       │
-      └─ [поток детектора] копия кадра (luma+chroma, страйд сохраняется)
-           → препроцессинг NV21→RGB planar int8 (letterbox 640×640)
-           → CVI_NN_ForwardAsync / CVI_NN_ForwardWait (дедлайн 800 мс)
-           → decode 6 тензоров (anchor-free YOLOv8, 3 ветки) + NMS
-           → публикация рамок (mutex + generation)
+      └─ [detector thread] frame copy (luma+chroma, stride preserved)
+           → preprocessing NV21→RGB planar int8 (letterbox 640×640)
+           → CVI_NN_ForwardAsync / CVI_NN_ForwardWait (800 ms deadline)
+           → decode 6 tensors (anchor-free YOLOv8, 3 branches) + NMS
+           → publish boxes (mutex + generation)
 ```
 
-Ключевые решения:
+Key design decisions:
 
-- **Никаких Mat на горячем пути.** `OPENCV_CVI_RAW=1` переключает бэкенд
-  opencv-mobile в «сырой» режим: `read_frame` кэширует маппинги плоскостей
-  VPSS-кадра (`CVI_SYS_MmapCache`, кэш по физ. адресу до `close()`) и
-  инвалидирует кэш каждый кадр. Ни `mmap/munmap` на каждый кадр, ни
-  `BGR→NV21` больше нет.
-- **Инференс — напрямую `cviruntime`** (`yolo8.c`), без `CVI_TDL_*`.
-  Асинхронный forward с дедлайном: если ожидание затянулось, модель
-  снимается (`CVI_NN_CleanupModel`) и регистрируется заново — это и есть
-  самовосстановление после клина драйвера.
-- **Разделение потоков.** Детектор работает на приватной копии кадра
-  (свежий кадр кладётся только когда детектор свободен), поэтому клин TPU
-  не останавливает поток: картинка идёт на 30 fps, рамки просто устаревают
-  (`det_age` в статистике).
-- **Свежесть важнее наличия рамок.** Результат, вернувшийся из forward-а
-  с опозданием (кадр успел устареть больше `SY_DET_MAX_AGE_MS`, по умолчанию
-  2 с), не публикуется. Нарисованные рамки старше `SY_BOX_TTL_MS` (по
-  умолчанию 4 с) не рисуются: вместо них в кадре появляется надпись
-  `no det Ns` — по ней видно, что детектор ждёт платформенного recovery,
-  а не поток встал. Так стрим никогда не показывает рамку от сцены, которой
-  уже нет.
-- **VENC аппаратный** (PT_JPEG) и читает тот же физический буфер; перед
-  отправкой — `CVI_SYS_IonFlushCache`, чтобы нарисованные пиксели были видны
-  энкодеру.
-- **Перезапуск без ребута.** При открытии камеры, если `CVI_VPSS_CreateGrp`
-  упал (остался «висячий» гр. от прошлого процесса), группа разрушается и
-  создаётся заново.
-- **Классы и вход модели — из тензоров.** Бинарь сам читает число классов,
-  размер входа и формат выходов (`auto`), поэтому подходят любые YOLOv8/v11-det
-  экспорты (int8 и fp32), а не только жёстко прошитые 80 классов.
+- **No Mat on the hot path.** `OPENCV_CVI_RAW=1` switches the opencv-mobile
+  backend into "raw" mode: `read_frame` caches the plane mappings of the VPSS
+  frame (`CVI_SYS_MmapCache`, cached by physical address until `close()`) and
+  invalidates the cache on every frame. There is no per-frame `mmap/munmap`
+  and no `BGR→NV21` conversion anymore.
+- **Inference goes directly through `cviruntime`** (`yolo8.c`), without
+  `CVI_TDL_*`. Asynchronous forward with a deadline: if the wait takes too
+  long, the model is unloaded (`CVI_NN_CleanupModel`) and registered again —
+  this is the self-recovery after a driver wedge.
+- **Thread separation.** The detector works on a private frame copy (a fresh
+  frame is submitted only when the detector is idle), so a TPU wedge does not
+  stop the stream: the picture keeps running at 30 fps and the boxes simply
+  become stale (`det_age` in the statistics).
+- **Freshness matters more than having boxes.** A result that returns from
+  forward too late (its frame is older than `SY_DET_MAX_AGE_MS`, 2 s by
+  default) is not published. Drawn boxes older than `SY_BOX_TTL_MS` (4 s by
+  default) are not rendered: instead the frame shows `no det Ns`, which makes
+  it clear that the detector is waiting for platform recovery rather than the
+  stream being stuck. This way the stream never shows a box from a scene that
+  is already gone.
+- **VENC is hardware** (PT_JPEG) and reads the same physical buffer;
+  `CVI_SYS_IonFlushCache` is called before sending so the encoder sees the
+  drawn pixels.
+- **Restart without reboot.** When opening the camera, if
+  `CVI_VPSS_CreateGrp` fails (a stale group from a previous process is left
+  behind), the group is destroyed and created again.
+- **Classes and model input come from tensors.** The binary reads the number
+  of classes, the input size and the output format itself (`auto` mode), so
+  any YOLOv8/v11-det export works (int8 and fp32), not just the hard-coded 80
+  classes.
 
-## Известный дефект платформы (cvi-tpu, «run dmabuf timeout»)
+## Known platform defect (cvi-tpu, "run dmabuf timeout")
 
-Драйвер TPU периодически блокирует forward в `cvi_tpu_ioctl`; своё ожидание
-он отпускает по собственному таймауту **~60 с** (в dmesg — `run dmabuf
-timeout`). Готовый патчер `soph_tpu.ko` лежит в `../tpu-fix/`: он снижает
-ожидание до ~1 с. `.ko` в репозиторий не коммитится — патчер работает на
-плате и делает резервную копию оригинала (см. `../tpu-fix/README.md`).
+The TPU driver periodically blocks forward in `cvi_tpu_ioctl`; it releases
+its wait on its own timeout of **~60 s** (in dmesg: `run dmabuf timeout`).
+The ready-made `soph_tpu.ko` patcher lives in `../tpu-fix/`: it reduces the
+wait to ~1 s. The `.ko` is not committed to the repository — the patcher runs
+on the board and backs up the original (see `../tpu-fix/README.md`).
 
-Что выяснено замерами (на исходном драйвере):
+What the measurements showed (on the original driver):
 
-- клин приходит тем раньше, чем горячее конвейер: на 30 fps-потоке первый —
-  в первые десятки секунд, на 4 fps — через ~20–30 с, а **без камеры**
-  (стенд `tpu_probe`: 18 500 инференсов подряд) не приходит вовсе;
-- ни сигналы (`pthread_kill` с обработчиком без `SA_RESTART`), ни импульс
-  сброса (`tpu-reset.sh`) клина не снимают — только драйверный таймаут;
-- после таймаута детектор сам снимает и регистрирует модель заново и
-  продолжает работу; поток при этом всё время идёт.
+- the wedge arrives sooner the hotter the pipeline: on a 30 fps stream the
+  first one comes within tens of seconds, at 4 fps after ~20–30 s, and
+  **without a camera** (the `tpu_probe` bench: 18,500 consecutive inferences)
+  it does not happen at all;
+- neither signals (`pthread_kill` with a handler without `SA_RESTART`) nor a
+  reset pulse (`tpu-reset.sh`) clear the wedge — only the driver timeout does;
+- after the timeout the detector unloads and re-registers the model by itself
+  and continues working; the stream keeps running the whole time.
 
-Измеренная «работоспособность» детектора: ~40 % времени на 30 fps-потоке
-(без фикса TPU), ~55–60 % на 4 fps (в логе `det_age` — возраст последних
-достоверных рамок). С введённой политикой свежести (см. выше) цена дефекта —
-рамки, пропадающие на время клина (`no det Ns` в кадре), а не остановка
-потока и не рамки от уже ушедшей сцены: опоздавшие результаты отбрасываются
-с записью `det: dropped stale result`.
+Measured detector "uptime": ~40% of the time on a 30 fps stream (without the
+TPU fix), ~55–60% at 4 fps (in the log, `det_age` is the age of the last
+valid boxes). With the freshness policy described above, the cost of the
+defect is boxes disappearing during a wedge (`no det Ns` in the frame)
+rather than the stream stopping or boxes from a scene that is already gone:
+late results are dropped with a `det: dropped stale result` log entry.
 
-## Точность детекций (сверка с эталоном TDL)
+## Detection accuracy (comparison with the TDL reference)
 
-Рамки сверены с эталонным пайплайном платы — TDL-семплом `sample_object_detection`
-(тот же cvimodel coco80, тот же кадр, офлайн). Совпадение по классу, скору и
-координатам — до десятых пикселя:
+The boxes were compared with the board's reference pipeline — the TDL sample
+`sample_object_detection` (same coco80 cvimodel, same frame, offline). The
+class, score and coordinates match to within a tenth of a pixel:
 
-| кадр | TDL | stream_yolo |
+| frame | TDL | stream_yolo |
 |---|---|---|
-| человек | person 0.8017, x 0.98..611.59, y 270.78..638.78 | 0.802, x 0.1..611.8, y 270.9..638.8 |
-| шкаф | refrigerator 0.6981, x 324.09..583.91, y 296.67..638.92 | 0.698, x 324.9..583.8, y 297.4..638.9 |
+| person | person 0.8017, x 0.98..611.59, y 270.78..638.78 | 0.802, x 0.1..611.8, y 270.9..638.8 |
+| cabinet | refrigerator 0.6981, x 324.09..583.91, y 296.67..638.92 | 0.698, x 324.9..583.8, y 297.4..638.9 |
 
-Три найденных при этом дефекта (все исправлены):
+Three defects found during this comparison (all fixed):
 
-1. **NV21→RGB: формула яркости.** Стояло `c = y - 128` (опечатка от
-   limited-range `c = y - 16`): половина яркостного диапазона уходила в чёрный,
-   детектор видел почти чёрный кадр — это и были «пропавшие рамки». VPSS
-   отдаёт **full-range** NV21 (в сыром дампе Y встречается 15 и 255 — вне
-   диапазона 16..235), поэтому применяется full-range конверсия:
+1. **NV21→RGB: luma formula.** The code had `c = y - 128` (a typo for the
+   limited-range `c = y - 16`): half of the luma range was mapped to black,
+   the detector saw an almost black frame — that was the cause of the
+   "missing boxes". VPSS outputs **full-range** NV21 (a raw dump contains Y
+   values 15 and 255, outside the 16..235 range), so full-range conversion is
+   used:
    `r = y + 1.402(v-128)`, `g = y - 0.344(u-128) - 0.714(v-128)`,
    `b = y + 1.772(u-128)`.
-2. **DFL-декод.** В softmax подавались значения после `sigmoid`; эталон
-   softmax-ит сырые де-квантованные логиты (`exp(p * qscale)`). Из-за
-   сжатого распределения рамки получались неверного размера.
-3. **Смещение входа тензора.** Заполнение шло как `(px - 128) * gain`;
-   у эталонного конфига mean = 0, т.е. `q = px * qscale/255` (0..127), без
-   вычитания.
+2. **DFL decoding.** Values after `sigmoid` were fed into softmax; the
+   reference applies softmax to the raw dequantized logits (`exp(p * qscale)`).
+   Because of the compressed distribution, the boxes had the wrong size.
+3. **Tensor input offset.** The fill was `(px - 128) * gain`; the reference
+   config has mean = 0, i.e. `q = px * qscale/255` (0..127), with no
+   subtraction.
 
-Для повторной сверки есть офлайн-режим без камеры:
+For re-checking there is an offline mode without a camera:
 
-- `SY_DUMP_NV21=/tmp/f.nv21` — сохранить первый сырой кадр камеры;
-- `SY_TEST_NV21=/tmp/f.nv21` — прогнать детектор по этому файлу (tight
-  layout: Y `640×640` + UV `640×320`) и напечатать результаты, без VPSS/VENC.
+- `SY_DUMP_NV21=/tmp/f.nv21` — save the first raw camera frame;
+- `SY_TEST_NV21=/tmp/f.nv21` — run the detector on that file (tight layout:
+  Y `640×640` + UV `640×320`) and print the results, without VPSS/VENC.
 
-## Модели
+## Models
 
-В `dist/board/models/` лежат 7 int8-моделей для cv181x: шесть штатных
-YOLOv8n-det (COCO-80, человек/транспорт, каска, светофор, номер, огонь/дым)
-и детектор квадрокоптеров `yolov11n_det_drone_640_640` (YOLO11n, 1 класс,
-md5 `d479ed5849723b9137d71fd18cc3d4ba`). Дрон-модель — одна общая версия,
-без отдельной «v2». Она является производной Ultralytics YOLO11n
-(AGPL-3.0); условия и источники — в `../THIRD_PARTY_NOTICES.md`.
+`dist/board/models/` contains 7 int8 models for cv181x: six stock YOLOv8n-det
+models (COCO-80, person/vehicle, helmet, traffic light, license plate,
+fire/smoke) and a quadcopter detector
+`yolov11n_det_drone_640_640` (YOLO11n, 1 class, md5
+`d479ed5849723b9137d71fd18cc3d4ba`). The drone model is a single common
+version, without a separate "v2". It is a derivative of Ultralytics YOLO11n
+(AGPL-3.0); terms and sources are in `../THIRD_PARTY_NOTICES.md`.
 
-Любая другая YOLOv8/YOLO11-det модель подхватывается бинарём автоматически:
-число классов и размер входа он читает из тензоров (`auto`-режим).
+Any other YOLOv8/YOLO11-det model is picked up by the binary automatically:
+it reads the number of classes and the input size from the tensors (`auto`
+mode).
 
-## Сборка
+## Building
 
-Нужны RISC-V musl toolchain, SDK и OpenCV:
+You need a RISC-V musl toolchain, the SDK and OpenCV:
 
-- RISC-V musl toolchain. `scripts/fetch-deps.sh` по умолчанию скачивает
+- RISC-V musl toolchain. By default, `scripts/fetch-deps.sh` downloads
   [musl-cross 20261001](https://github.com/musl-cross/musl-cross/releases/tag/20261001)
-  (`riscv64-unknown-linux-musl`, SHA256 зафиксирован); поддерживаются также
-  [musl.cc](https://musl.cc/) `riscv64-linux-musl-cross` (GCC 11.2.1) и
-  Sipeed/Sophgo с префиксом `riscv64-unknown-linux-musl-`;
+  (`riscv64-unknown-linux-musl`, SHA256 pinned); [musl.cc](https://musl.cc/)
+  `riscv64-linux-musl-cross` (GCC 11.2.1) and Sipeed/Sophgo with the
+  `riscv64-unknown-linux-musl-` prefix are also supported;
 - [milkv-duo/cvitek-tdl-sdk-sg200x](https://github.com/milkv-duo/cvitek-tdl-sdk-sg200x)
-  — middleware-заголовки и `libvenc.so`/`libsys.so`, коммит зафиксирован в
+  — middleware headers and `libvenc.so`/`libsys.so`, the commit is pinned in
   `scripts/fetch-deps.sh`;
-- официальный [nihui/opencv-mobile v36](https://github.com/nihui/opencv-mobile/releases/tag/v36)
-  (`opencv-mobile-4.13.0.zip`, Apache-2.0) + патч
+- the official [nihui/opencv-mobile v36](https://github.com/nihui/opencv-mobile/releases/tag/v36)
+  (`opencv-mobile-4.13.0.zip`, Apache-2.0) plus the
   `patches/opencv-mobile-4.13.0-cvi-capture.patch`.
 
-Всё скачивается и собирается скриптами:
+Everything is downloaded and built by the scripts:
 
 ```sh
 cd yolo_stream
-./scripts/fetch-deps.sh       # тулчейн, SDK, исходники OpenCV + патч
-./scripts/build-opencv.sh     # OpenCV в .deps/opencv-install
+./scripts/fetch-deps.sh       # toolchain, SDK, OpenCV sources + patch
+./scripts/build-opencv.sh     # OpenCV into .deps/opencv-install
 ./scripts/build.sh            # build/bin/stream_yolo
 ```
 
-Или с готовыми путями:
+Or with pre-installed paths:
 
 ```sh
 TOOLCHAIN_PATH=/path/to/riscv64-linux-musl-cross \
@@ -173,136 +179,169 @@ OpenCV_DIR=/path/to/opencv/lib/cmake/opencv4 \
 ./scripts/build.sh
 ```
 
-`TOOLCHAIN_PATH` читается и из окружения, и через `-DTOOLCHAIN_PATH`; для
-`try_compile` надёжнее экспортировать его. `scripts/fetch-deps.sh` качает
-только нужные файлы SDK (sparse checkout), без примеров и бинарей.
+`TOOLCHAIN_PATH` is read both from the environment and via
+`-DTOOLCHAIN_PATH`; exporting it is more reliable for `try_compile`.
+`scripts/fetch-deps.sh` downloads only the required SDK files (sparse
+checkout), without examples and binaries.
 
-Ту же сборку можно запустить на GitHub: вкладка **Actions** → **build** →
-**Run workflow**. Готовый `stream_yolo` будет в артефакте `yolo_stream-bin`.
+The same build can be run on GitHub: **Actions** tab → **build** →
+**Run workflow**. The run produces `yolo_stream-bin` (the bare binary) and
+`yolo_stream-board` (a complete self-contained tarball) artifacts. Pushing a
+`v*` tag publishes both release assets automatically.
 
-## Установка на плату
+To create the complete package locally after a build:
+
+```sh
+../scripts/package-board.sh yolo_stream build/bin/stream_yolo \
+    .deps/riscv64-linux-musl-cross ../out
+```
+
+## Installing on the board
 
 ```sh
 chmod +x install.sh
-./install.sh                 # спросит IP платы
+./install.sh                 # downloads the latest release, asks for the IP
 BOARD_IP=<IP> ./install.sh
-TPU_PATCH=1 ./install.sh <IP>   # ещё и фикс таймаута TPU
+RELEASE=v1.0.0 ./install.sh <IP>
+PAYLOAD_DIR=/path/to/package ./install.sh <IP>
+TPU_PATCH=1 ./install.sh <IP>   # also apply the TPU timeout fix
 ```
 
-Установщик копирует пакет в `/root/yolo_stream`, сохраняет уже залитые
-модели и `/root/faces`, сверяет md5 и **не** добавляет автозапуск. Адрес
-платы не фиксирован: в разных сетях (USB/RNDIS, Wi-Fi, Ethernet) он свой.
+By default the installer downloads `yolo_stream-board.tar.gz` from the latest
+GitHub Release, verifies its SHA256, copies it to `/root/yolo_stream`, checks
+the package md5 list on the board, and does **not** add an autostart entry.
+The package already contains the binary, models, vendor libraries and a
+matching musl loader/libc, so no cross-compilation or manual library copying is
+needed on the board. Use `PAYLOAD_DIR` to install a locally built package
+instead.
 
-Камера настраивается штатным образом по `/mnt/data/sensor_cfg.ini`
-(I2C-адрес матрицы и `lane_id` MIPI-пар). Скрипты не трогают pinmux и
-`/dev/mem`; если файла нет, установщик предупредит.
+The installer preserves already uploaded models, and `/root/faces` is used
+only by `yolo_face`. The board address is not fixed: it differs between
+networks (USB/RNDIS, Wi-Fi, Ethernet).
 
-### Ручная установка
+The camera is configured by the stock image through `/mnt/data/sensor_cfg.ini`
+(sensor I2C address and MIPI `lane_id`). The scripts do not touch pinmux or
+`/dev/mem`; if the file is missing, the installer warns about it.
+
+### Manual installation
 
 ```sh
-tar -C dist/board -cf - . | ssh root@<IP> 'rm -rf /root/yolo_stream; mkdir -p /root/yolo_stream; tar -xf - -C /root/yolo_stream'
+curl -fLO https://github.com/mclovin4k/lichee-rv-nano-YOLO/releases/latest/download/yolo_stream-board.tar.gz
+curl -fLO https://github.com/mclovin4k/lichee-rv-nano-YOLO/releases/latest/download/yolo_stream-board.tar.gz.sha256
+sha256sum -c yolo_stream-board.tar.gz.sha256
+tar -xzf yolo_stream-board.tar.gz -C /tmp/yolo_stream-package
+tar -C /tmp/yolo_stream-package -cf - . | \
+    ssh root@<IP> 'rm -rf /root/yolo_stream; mkdir -p /root/yolo_stream; tar -xf - -C /root/yolo_stream'
 ssh root@<IP> 'chmod +x /root/yolo_stream/stream_yolo /root/yolo_stream/*.sh'
 ```
 
-## Запуск
+## Running
 
 ```sh
-ssh root@<IP> '/root/yolo_stream/start_stream.sh'          # меню моделей
-ssh root@<IP> '/root/yolo_stream/start_stream.sh auto'     # без меню
+ssh root@<IP> '/root/yolo_stream/start_stream.sh'          # model menu
+ssh root@<IP> '/root/yolo_stream/start_stream.sh auto'     # no menu
 ssh root@<IP> '/root/yolo_stream/start_stream.sh status'
 ssh root@<IP> '/root/yolo_stream/start_stream.sh stop'
 ```
 
-- Поток: `http://<IP>:7777/` (MJPEG, VLC/ffplay)
-- Лог: `/root/yolo_stream/log/stream.log` (прошлый при старте уезжает в `.1`)
-- Модели: `dist/board/models/` рядом со скриптом, затем `/root/models`
-- Last model: `/root/yolo_stream/log/last_model`
+- Stream: `http://<IP>:7777/` (MJPEG, VLC/ffplay)
+- Log: `/root/yolo_stream/log/stream.log` (the previous one is moved to `.1`
+  at startup)
+- Models: `dist/board/models/` next to the script, then `/root/models`
+- Last model file: `/root/yolo_stream/log/last_model`
 
-`stream_yolo` и `face_stream` из соседнего проекта `yolo_face` занимают одну
-камеру и порт 7777, поэтому режимы взаимоисключающие: `start_stream.sh`
-останавливает `face_stream`, а `start_face.sh start` останавливает
-`stream_yolo`. Автозапуск не ставится — режим выбирается вручную после
-загрузки.
+`stream_yolo` and `face_stream` from the neighboring `yolo_face` project use
+the same camera and port 7777, so the modes are mutually exclusive:
+`start_stream.sh` stops `face_stream`, and `start_face.sh start` stops
+`stream_yolo`. No autostart is installed — the mode is chosen manually after
+boot.
 
-### Загрузчик
+### Loader and libraries
 
-По умолчанию бинарь запускается напрямую и использует системный
-`/lib/ld-musl-riscv64.so.1`. Если в образе нет системного загрузчика или он
-несовместим, `run_stream.sh` берёт `runtime/ld-musl-riscv64.so.1`:
+The release package is self-contained: `run_stream.sh` sets
+`LD_LIBRARY_PATH` to `runtime/` and starts the binary through
+`runtime/ld-musl-riscv64.so.1` by default. The bundled loader and libc come
+from the same toolchain as the binary, so no system musl version is required.
 
 ```sh
-SY_BUNDLED_LOADER=1 /root/yolo_stream/start_stream.sh auto
+# default: bundled loader + bundled libraries
+/root/yolo_stream/start_stream.sh auto
+
+# opt out and use the system /lib/ld-musl-riscv64.so.1
+SY_BUNDLED_LOADER=0 /root/yolo_stream/start_stream.sh auto
 ```
 
-При явном запуске через загрузчик `comm` процесса становится
-`ld-musl-riscv64`, поэтому скрипт хранит pid в `/tmp/yolo_stream.app.pid`,
-а не ищет процесс через `pidof`.
+When the binary is started explicitly through the loader, the process `comm`
+becomes `ld-musl-riscv64`, so the script stores the pid in
+`/tmp/yolo_stream.app.pid` instead of looking the process up via `pidof`.
 
-## Ручки окружения (без пересборки)
+## Environment variables (no rebuild required)
 
-| Переменная | По умолчанию | Что делает |
+| Variable | Default | Effect |
 |---|---|---|
-| `SY_HP` | "960 540" | разрешение потока, W H |
-| `SY_KEEP_LOG` | выкл. | `1` — не сдвигать лог в `.1` при старте |
-| `SY_STREAM_FPS` | 0 (макс.) | троттлинг цикла захвата/кодирования |
-| `SY_ENC_EVERY` | 1 | кодировать каждый N-й кадр |
-| `SY_ENC` | 1 | `0` — выключить VENC (для экспериментов) |
-| `SY_DRAW` | 1 | `0` — не рисовать рамки |
-| `SY_DET` | 1 | `0` — выключить поток детектора |
-| `SY_HTTP_PORT` | 7777 | порт MJPEG-сервера (например, `7778` для чистого съёмочного потока) |
-| `SY_DET_THR` | 0.5 | порог скора детекций (ниже — больше слабых рамок) |
-| `SY_NAMES_FILE` | `<model>.names` | sidecar с именами классов (по одному в строке); без него рамки подписаны `class:N` |
-| `SY_WEDGE_MS` | 0 (выкл.) | порог тишины детектора: раз в лог пишется «stalled» |
-| `SY_WEDGE_REBOOT` | 0 | `1` — ребут, если тишина длится дольше 3×`SY_WEDGE_MS` |
-| `SY_DET_MAX_AGE_MS` | 2000 | не публиковать результат, если его кадр старше (после клина) |
-| `SY_BOX_TTL_MS` | 4000 | не рисовать рамки старше этого; `0` — рисовать всегда |
-| `SY_MAX_BOXES` | 16 | не публиковать результат, где рамок больше N (битый кадр); `0` — выключить |
-| `SY_DUMP_NV21` | выкл. | записать первый сырой NV21-кадр в файл (отладка) |
-| `SY_TEST_NV21` | выкл. | офлайн-прогон детектора по NV21-файлу и выход (отладка) |
-| `SY_BUNDLED_LOADER` | 0 | `1` — запуск через встроенный musl loader |
+| `SY_HP` | "960 540" | stream resolution, W H |
+| `SY_KEEP_LOG` | off | `1` — do not rotate the log to `.1` at startup |
+| `SY_STREAM_FPS` | 0 (max) | throttle the capture/encode loop |
+| `SY_ENC_EVERY` | 1 | encode every Nth frame |
+| `SY_ENC` | 1 | `0` — disable VENC (for experiments) |
+| `SY_DRAW` | 1 | `0` — do not draw boxes |
+| `SY_DET` | 1 | `0` — disable the detector thread |
+| `SY_HTTP_PORT` | 7777 | MJPEG server port (e.g. `7778` for a clean capture stream) |
+| `SY_DET_THR` | 0.5 | detection score threshold (lower — more weak boxes) |
+| `SY_NAMES_FILE` | `<model>.names` | class-name sidecar (one per line); without it boxes are labeled `class:N` |
+| `SY_WEDGE_MS` | 0 (off) | detector silence threshold: "stalled" is logged once per interval |
+| `SY_WEDGE_REBOOT` | 0 | `1` — reboot if silence lasts longer than 3×`SY_WEDGE_MS` |
+| `SY_DET_MAX_AGE_MS` | 2000 | do not publish a result if its frame is older than this (after a wedge) |
+| `SY_BOX_TTL_MS` | 4000 | do not draw boxes older than this; `0` — always draw |
+| `SY_MAX_BOXES` | 16 | do not publish a result with more than N boxes (corrupt frame); `0` — disable |
+| `SY_DUMP_NV21` | off | write the first raw NV21 frame to a file (debug) |
+| `SY_TEST_NV21` | off | run the detector offline on an NV21 file and exit (debug) |
+| `SY_BUNDLED_LOADER` | 1 | `0` — use the system musl loader instead of `runtime/` |
 
-Аргументы командной строки: `stream_yolo <путь к .cvimodel> <классов|auto> <W> [H]`
-(`auto` — число классов бинарь читает из тензоров модели; обычно этот
-аргумент подставляет `start_stream.sh`).
+Command-line arguments: `stream_yolo <path to .cvimodel> <classes|auto> <W> [H]`
+(`auto` — the binary reads the number of classes from the model tensors;
+normally this argument is supplied by `start_stream.sh`).
 
-Имена классов в `.cvimodel` не хранятся. Положите рядом файл
-`<имя_модели>.names` (по одному имени в строке) — `stream_yolo` подпишет
-рамки этими именами. yolo_studio создаёт и заливает такой файл вместе с
-моделью автоматически; без него остаются подписи `class:N`.
+Class names are not stored in `.cvimodel`. Put a
+`<model_name>.names` file next to it (one name per line) — `stream_yolo` will
+label the boxes with those names. yolo_studio creates and uploads such a file
+together with the model automatically; without it the labels remain
+`class:N`.
 
-## Проверка
+## Verification
 
 ```sh
 ssh root@<IP> 'grep "\[stream\]" /root/yolo_stream/log/stream.log | tail -3'
 # [stream] frames=1080 fps=30.0 det=83.8ms (prep=38.3 fwd=37.0 dec=10.7) boxes=1 det_age=0.0s
-#   fps      — частота потока (не зависит от детектора)
-#   det      — EMA времени одного инференса (prep/fwd/dec — подготовка входа,
-#              forward NPU, декод тензоров)
-#   boxes    — сколько рамок в последнем результате
-#   det_age  — возраст последних рамок (растёт во время клина TPU)
+#   fps      — stream rate (independent of the detector)
+#   det      — EMA of one inference time (prep/fwd/dec — input preparation,
+#              NPU forward, tensor decoding)
+#   boxes    — number of boxes in the latest result
+#   det_age  — age of the latest boxes (grows during a TPU wedge)
 
 ssh root@<IP> 'grep "^det:" /root/yolo_stream/log/stream.log | tail -3'
 # det: n=1 max=0.636 | 72:0.64 [325 297 585 639]
-#   n        — число рамок после NMS
-#   max      — лучший скор сети в кадре (виден, даже если рамок нет)
-#   cls:score [x1 y1 x2 y2] — детекции, координаты в кадре 640×640
+#   n        — number of boxes after NMS
+#   max      — best network score in the frame (visible even without boxes)
+#   cls:score [x1 y1 x2 y2] — detections, coordinates in the 640×640 frame
 
-# во время клина TPU в кадре видна надпись no det Ns (рамки старше TTL
-# не рисуются), а опоздавшие результаты отбрасываются:
+# during a TPU wedge the frame shows "no det Ns" (boxes older than the TTL
+# are not drawn), and late results are dropped:
 ssh root@<IP> 'grep -c "dropped stale result" /root/yolo_stream/log/stream.log'
 
-# кадр из потока (на хосте):
+# a frame from the stream (on the host):
 curl -s -m 5 http://<IP>:7777/ | head -c 200000 > /tmp/m.bin
-# затем вырезать первый JPEG (FFD8..FFD9)
+# then extract the first JPEG (FFD8..FFD9)
 ```
 
-## Ограничения
+## Limitations
 
-- В `close()` бэкенда иногда падает второй `stop_streaming` (exit 139) —
-  камера при этом освобождается, следующий старт поднимает VPSS-группу
-  («reclaiming stale group»).
-- Процесс, застрявший в TPU-ioctl, не убивается `kill -9` до драйверного
-  таймаута (с фиксом TPU — до ~1 с); `start_stream.sh` умеет ждать его
-  исчезновения, поэтому такого процесса в паре «старый/новый» не возникает.
-- MJPEG q75 при 30 fps — около 9 Мбит/с; для экономии есть `SY_ENC_EVERY`.
-- Лицензии сторонних моделей и библиотек — в `../THIRD_PARTY_NOTICES.md`.
+- In the backend's `close()` the second `stop_streaming` sometimes crashes
+  (exit 139) — the camera is released, and the next start brings up the VPSS
+  group ("reclaiming stale group").
+- A process stuck in the TPU ioctl cannot be killed with `kill -9` until the
+  driver timeout expires (with the TPU fix, ~1 s); `start_stream.sh` waits for
+  it to disappear, so no "old/new" process pair remains.
+- MJPEG q75 at 30 fps is about 9 Mbit/s; use `SY_ENC_EVERY` to save
+  bandwidth.
+- Third-party model and library licenses are in `../THIRD_PARTY_NOTICES.md`.

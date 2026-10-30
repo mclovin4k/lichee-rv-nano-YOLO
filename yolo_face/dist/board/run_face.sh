@@ -4,9 +4,8 @@
 # Used by start_face.sh, but can be run by hand:
 #   ./run_face.sh [width] [height]
 #
-# The board loader (/lib/ld-musl-riscv64.so.1) is used by default.  Set
-# SY_BUNDLED_LOADER=1 to force the loader from runtime/ (fallback for unusual
-# images).
+# The loader from runtime/ is used by default so the musl version always
+# matches the bundled libs.  Set SY_BUNDLED_LOADER=0 to use the system loader.
 set -eu
 
 SELF=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
@@ -64,9 +63,8 @@ export SY_ROT_CW=${SY_ROT_CW:-1}
 mkdir -p "$FACES_DIR"
 printf '%s\n' "$$" > "$APP_PIDFILE"
 
-if [ "${SY_BUNDLED_LOADER:-0}" = "1" ] || [ ! -x /lib/ld-musl-riscv64.so.1 ]; then
-    [ -x "$RUNTIME/ld-musl-riscv64.so.1" ] || \
-        die "no system loader and no bundled loader"
+if [ "${SY_BUNDLED_LOADER:-1}" != "0" ] && \
+        [ -x "$RUNTIME/ld-musl-riscv64.so.1" ]; then
     exec "$RUNTIME/ld-musl-riscv64.so.1" "$APP" "$@"
 fi
 

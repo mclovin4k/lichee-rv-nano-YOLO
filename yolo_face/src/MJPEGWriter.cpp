@@ -64,9 +64,9 @@ void MJPEGWriter::Listener() {
            loop. */
         struct timeval rtv = {0, 300000};
         setsockopt(client, SOL_SOCKET, SO_RCVTIMEO, &rtv, sizeof(rtv));
-        /* Отправка кадра тоже ограничена по времени: клиент, который перестал
-           читать (например, закрыл вкладку), иначе вешает поток writer, а
-           через него — остановку приложения. */
+        /* Sending a frame is time-limited too: a client that stopped reading
+           (for example, closed the tab) would otherwise block the writer
+           thread, and through it, application shutdown. */
         struct timeval stv = {0, 3000000};
         setsockopt(client, SOL_SOCKET, SO_SNDTIMEO, &stv, sizeof(stv));
         std::string req;
@@ -195,7 +195,7 @@ void MJPEGWriter::ClientWrite(clientFrame &cf) {
     _write(cf.client, (char *)string_head.c_str(), (int)string_head.size());
     int n = _write(cf.client, (char *)(cf.outbuf), cf.outlen);
     if (n < cf.outlen) {
-        /* клиент не читает — отключаем его, иначе он держит writer */
+        /* the client is not reading — disconnect it, otherwise it holds the writer */
         std::vector<int>::iterator it = find(clients.begin(), clients.end(), cf.client);
         if (it != clients.end()) {
             cerr << "kill client " << cf.client << endl;

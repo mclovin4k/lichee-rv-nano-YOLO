@@ -1,3 +1,3 @@
-"""Lichee YOLO Studio — сбор датасета, разметка и сборка cvimodel для LicheeRV Nano."""
+"""Lichee YOLO Studio — dataset capture, labeling, and cvimodel builds for LicheeRV Nano."""
 
 __version__ = "0.1.0"
