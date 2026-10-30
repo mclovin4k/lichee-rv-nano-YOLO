@@ -31,6 +31,15 @@ the same time; this is expected.
 
 ## Installing on the board
 
+No clone is needed — the installer can be fetched on its own:
+
+```sh
+curl -fsSLO https://raw.githubusercontent.com/mclovin4k/lichee-rv-nano-YOLO/master/yolo_face/install.sh
+sh install.sh                # downloads the latest release, asks for the IP
+```
+
+From a checkout of the repository:
+
 ```sh
 chmod +x install.sh
 ./install.sh                 # downloads the latest release, asks for the IP

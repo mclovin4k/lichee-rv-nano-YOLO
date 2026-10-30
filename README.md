@@ -1,5 +1,8 @@
 # LicheeRV Nano: camera, NPU and face recognition
 
+[![build](https://github.com/mclovin4k/lichee-rv-nano-YOLO/actions/workflows/build.yml/badge.svg)](https://github.com/mclovin4k/lichee-rv-nano-YOLO/actions/workflows/build.yml)
+[![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 A working toolkit for the LicheeRV Nano (SG2002 / CV181x) with the GC4653
 camera: MJPEG streaming, YOLO detection on the NPU, face recognition, and a
 desktop tool for capturing datasets, labeling and building models. The
@@ -86,6 +89,15 @@ and leave the camera configuration alone:
 cd yolo_stream && ./install.sh              # asks for the IP
 # or
 BOARD_IP=192.0.2.100 ./install.sh
+```
+
+Without cloning the repository:
+
+```sh
+curl -fsSLO https://raw.githubusercontent.com/mclovin4k/lichee-rv-nano-YOLO/master/yolo_stream/install.sh
+sh install.sh
+curl -fsSLO https://raw.githubusercontent.com/mclovin4k/lichee-rv-nano-YOLO/master/yolo_face/install.sh
+sh install.sh
 ```
 
 The camera is configured by the stock image through `/mnt/data/sensor_cfg.ini`
