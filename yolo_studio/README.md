@@ -27,8 +27,8 @@ Python and Qt do not need to be installed. Each platform has two variants:
 The full variant is a folder, not a single file: unpack it and run
 `LicheeYOLOStudio-full/LicheeYOLOStudio-full.exe` (Windows) or
 `LicheeYOLOStudio-full/LicheeYOLOStudio-full` (Linux). It starts without
-extracting anything, so startup is as fast as the slim build. The single-file
-executable stays small because it does not carry PyTorch.
+unpacking itself into a temporary directory. The single-file executable stays
+small because it does not carry PyTorch.
 
 **Linux x86_64**
 
@@ -328,8 +328,9 @@ the LGPL notice next to the binaries.
 
 GitHub Actions builds both variants on every push and attaches them to a
 release for `v*` tags. The workflow runs an offscreen `--smoke-test` on both
-platforms, and for the full build also `--have-ml`, which fails unless torch
-and ultralytics can really be imported from the frozen bundle.
+platforms, and for the full build also `--have-ml` plus a real ONNX export,
+which fails unless torch and ultralytics can really be imported from the
+frozen bundle and produce the six board outputs.
 
 ## Troubleshooting
 
