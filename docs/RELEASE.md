@@ -84,7 +84,7 @@ LicheeYOLOStudio-full/LicheeYOLOStudio-full --have-ml           # prints ok
 ## Removing a release
 
 ```sh
-gh release delete v1.0.2 --yes --cleanup-tag
+gh release delete <tag> --yes --cleanup-tag
 ```
 
 GitHub may keep unreferenced blobs reachable by SHA for a while; that is
