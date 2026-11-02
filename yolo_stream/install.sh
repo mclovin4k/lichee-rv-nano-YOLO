@@ -40,7 +40,7 @@ TMP=
 # Libraries the application loads at run time; copied from the board firmware.
 LIBS="libcviruntime.so libcvikernel.so libvenc.so libsys.so libisp.so
 libisp_algo.so libae.so libawb.so libsns_gc4653.so libcvi_bin.so
-libcvi_bin_isp.so"
+libcvi_bin_isp.so libatomic.so.1 libstdc++.so.6 libgcc_s.so.1"
 
 die() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
 say() { printf '\n>>> %s\n' "$*"; }

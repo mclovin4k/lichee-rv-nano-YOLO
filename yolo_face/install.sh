@@ -43,9 +43,9 @@ TMP=
 # back to the system libvpu.so when it is absent.
 LIBS="libcviruntime.so libcvikernel.so libvenc.so libsys.so libisp.so
 libisp_algo.so libae.so libawb.so libsns_gc4653.so libcvi_bin.so
-libcvi_bin_isp.so libcvi_tdl.so libcvimath.so libcnpy.so libcvi_ive.so
+libcvi_bin_isp.so libatomic.so.1 libstdc++.so.6 libgcc_s.so.1 libcvi_tdl.so libcvimath.so libcnpy.so libcvi_ive.so
 libopencv_core.so.3.2 libopencv_imgproc.so.3.2 libopencv_imgcodecs.so.3.2
-libvpu_tdl.so"
+libvpu_tdl.so libz.so.1"
 
 die() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
 say() { printf '\n>>> %s\n' "$*"; }
