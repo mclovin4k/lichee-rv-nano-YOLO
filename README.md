@@ -21,6 +21,8 @@ libraries from the board firmware and upload only the models you provide. See
 | [`yolo_studio/`](yolo_studio/README.md) | Desktop tool: dataset import/capture, labeling, training, `.cvimodel` export | download the Linux/Windows build from Releases |
 | [`tpu-fix/`](tpu-fix/README.md) | TPU timeout patcher (`soph_tpu.ko`) without redistributing the `.ko` | `tpu-fix/patch_tpu.sh` on the board |
 
+<img width="1919" height="823" alt="image" src="https://github.com/user-attachments/assets/4044f4de-e4af-47e8-b3e9-9adbd29fef01" />
+
 `yolo_stream` and `yolo_face` share the camera and port 7777, so starting one
 stops the other. No autostart is installed: after boot you choose the mode
 manually.
