@@ -8,10 +8,10 @@ What a release contains, how it is produced and how to verify it.
 |---|---|---|
 | `yolo_stream-board.tar.gz` | ~1 MB | `stream_yolo`, `start_stream.sh`, `run_stream.sh`, `README.md`, empty `models/`, `md5sums.txt` |
 | `yolo_face-board.tar.gz` | ~1 MB | `face_stream`, `start_face.sh`, `run_face.sh`, `README.md`, empty `models/face/`, `md5sums.txt` |
-| `yolo_studio-linux-x86_64.tar.gz` | ~100 MB | one-file Studio + `LGPL-3.0.txt` + `THIRD_PARTY_NOTICES.md` |
-| `yolo_studio-linux-x86_64-full.tar.gz` | ~700 MB | one-folder Studio with ultralytics + torch, notices inside |
-| `yolo_studio-windows-x86_64.tar.gz` | ~100 MB | `LicheeYOLOStudio.exe` + notices |
-| `yolo_studio-windows-x86_64-full.tar.gz` | ~900 MB | one-folder Studio with ultralytics + torch, notices inside |
+| `yolo_studio-linux-x86_64.tar.gz` | ~160 MB | one-file Studio + `LGPL-3.0.txt` + `THIRD_PARTY_NOTICES.md` |
+| `yolo_studio-linux-x86_64-full.tar.gz` | ~490 MB | one-folder Studio with ultralytics + torch, notices inside |
+| `yolo_studio-windows-x86_64.tar.gz` | ~105 MB | `LicheeYOLOStudio.exe` + notices |
+| `yolo_studio-windows-x86_64-full.tar.gz` | ~335 MB | one-folder Studio with ultralytics + torch, notices inside |
 | `*.sha256` | — | one per archive |
 | `SHA256SUMS.txt` | — | all of the above |
 
@@ -60,9 +60,12 @@ needed (the workflow generates them from commits).
 ## Verifying a release
 
 ```sh
-gh release download v1.0.1 --pattern '*.sha256' --pattern 'SHA256SUMS.txt'
+gh release download v1.0.1 --pattern '*.tar.gz' --pattern 'SHA256SUMS.txt'
 sha256sum -c SHA256SUMS.txt --ignore-missing
 ```
+
+Each archive also has its own `.sha256` file if you prefer to verify them one
+by one, for example `sha256sum -c yolo_stream-board.tar.gz.sha256`.
 
 Board archive sanity check (no vendor files, no models):
 

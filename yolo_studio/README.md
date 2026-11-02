@@ -21,8 +21,8 @@ Python and Qt do not need to be installed. Each platform has two variants:
 
 | Asset | Size | Training / ONNX export |
 |---|---|---|
-| `yolo_studio-<os>-x86_64.tar.gz` | ~150 MB | needs a separate Python with `ultralytics` |
-| `yolo_studio-<os>-x86_64-full.tar.gz` | ~600–900 MB | works out of the box — torch and ultralytics are inside |
+| `yolo_studio-<os>-x86_64.tar.gz` | ~160 MB | needs a separate Python with `ultralytics` |
+| `yolo_studio-<os>-x86_64-full.tar.gz` | ~330–490 MB | works out of the box — torch and ultralytics are inside |
 
 The full variant is a folder, not a single file: unpack it and run
 `LicheeYOLOStudio-full/LicheeYOLOStudio-full.exe` (Windows) or
