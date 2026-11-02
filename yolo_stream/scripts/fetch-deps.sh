@@ -113,7 +113,10 @@ fi
 toolchain_prefix >/dev/null || \
     die "toolchain not unpacked as expected: $TC_DIR"
 
-if [ ! -f "$SDK_DIR/.ready" ]; then
+# A cache from an older run may have the SDK without the TPU libraries;
+# treat that as "not ready" and check it out again.
+if [ ! -f "$SDK_DIR/.ready" ] || \
+        [ ! -f "$SDK_DIR/sample/3rd/tpu/lib/libcviruntime.so" ]; then
     say "cvitek SDK: $SDK_REPO @ $SDK_COMMIT (headers, middleware and TPU libs)"
     rm -rf "$SDK_DIR"
     mkdir -p "$SDK_DIR"
@@ -141,7 +144,8 @@ fi
 # from the SDK. They are downloaded at build time and are not stored in the
 # repository (the vendor does not license redistribution).
 CVIRT_DIR="$DEPS/cviruntime"
-if [ ! -f "$CVIRT_DIR/.ready" ]; then
+if [ ! -f "$CVIRT_DIR/.ready" ] || \
+        [ ! -f "$CVIRT_DIR/lib/libcviruntime.so" ]; then
     say "cviruntime: $CVIRT_REPO @ $CVIRT_COMMIT (headers)"
     rm -rf "$CVIRT_DIR"
     mkdir -p "$CVIRT_DIR/include" "$CVIRT_DIR/lib"

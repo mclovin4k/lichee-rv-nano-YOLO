@@ -38,9 +38,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ matrix.project }}/.deps
-          key: deps-${{ matrix.project }}-${{ hashFiles(format('{0}/scripts/fetch-deps.sh', matrix.project), format('{0}/scripts/build-opencv.sh', matrix.project), format('{0}/patches/*.patch', matrix.project)) }}
+          key: deps-v2-${{ matrix.project }}-${{ hashFiles(format('{0}/scripts/fetch-deps.sh', matrix.project), format('{0}/scripts/build-opencv.sh', matrix.project), format('{0}/patches/*.patch', matrix.project)) }}
           restore-keys: |
-            deps-${{ matrix.project }}-
+            deps-v2-${{ matrix.project }}-
 
       - name: Fetch toolchain, SDK and OpenCV source
         working-directory: ${{ matrix.project }}
