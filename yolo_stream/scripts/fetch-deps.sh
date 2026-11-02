@@ -8,8 +8,8 @@
 #   - cvitek-tdl-sdk-sg200x: https://github.com/milkv-duo/cvitek-tdl-sdk-sg200x
 #   - opencv-mobile 4.13.0:  https://github.com/nihui/opencv-mobile (Apache-2.0)
 #
-# The SDK checkout is sparse: only the middleware headers, libvenc.so and
-# libsys.so are downloaded.  The OpenCV source is the official 4.13.0 release
+# The SDK checkout is sparse: the middleware/tpu headers, libvenc.so, libsys.so
+# and the prebuilt TPU libraries are downloaded.  The OpenCV source is the official 4.13.0 release
 # archive, patched with yolo_stream/patches/opencv-mobile-4.13.0-cvi-capture.patch.
 set -eu
 
@@ -24,6 +24,11 @@ TC_DIR="$DEPS/riscv64-linux-musl-cross"
 SDK_REPO=${SDK_REPO:-https://github.com/milkv-duo/cvitek-tdl-sdk-sg200x.git}
 SDK_COMMIT=${SDK_COMMIT:-02dfb9091d390a7b0d1177fe7b651db1b99854bc}
 SDK_DIR="$DEPS/cvitek-tdl-sdk-sg200x"
+
+# cviruntime headers (sophgo/cviruntime); the prebuilt libcviruntime.so and
+# libcvikernel.so come from the SDK above.
+CVIRT_REPO=${CVIRT_REPO:-https://github.com/sophgo/cviruntime.git}
+CVIRT_COMMIT=${CVIRT_COMMIT:-ef8044988c2b4a5d491125d13e6f048b5f8a1389}
 
 OCV_VERSION=4.13.0
 OCV_URL=${OCV_URL:-https://github.com/nihui/opencv-mobile/releases/download/v36/opencv-mobile-4.13.0.zip}
@@ -109,7 +114,7 @@ toolchain_prefix >/dev/null || \
     die "toolchain not unpacked as expected: $TC_DIR"
 
 if [ ! -f "$SDK_DIR/.ready" ]; then
-    say "cvitek SDK: $SDK_REPO @ $SDK_COMMIT (headers + libvenc/libsys)"
+    say "cvitek SDK: $SDK_REPO @ $SDK_COMMIT (headers, middleware and TPU libs)"
     rm -rf "$SDK_DIR"
     mkdir -p "$SDK_DIR"
     git -C "$SDK_DIR" init -q
@@ -120,6 +125,8 @@ if [ ! -f "$SDK_DIR/.ready" ]; then
 sample/3rd/middleware/v2/include/
 sample/3rd/middleware/v2/lib/libvenc.so
 sample/3rd/middleware/v2/lib/libsys.so
+sample/3rd/tpu/lib/
+sample/3rd/tpu/include/
 EOF
     git -C "$SDK_DIR" fetch -q --depth 1 origin "$SDK_COMMIT"
     git -C "$SDK_DIR" checkout -q FETCH_HEAD
@@ -129,6 +136,31 @@ fi
     die "SDK headers missing (sparse checkout failed)"
 [ -f "$SDK_DIR/sample/3rd/middleware/v2/lib/libvenc.so" ] || \
     die "SDK libvenc.so missing (sparse checkout failed)"
+
+# cviruntime: the headers come from sophgo/cviruntime, the prebuilt libraries
+# from the SDK. They are downloaded at build time and are not stored in the
+# repository (the vendor does not license redistribution).
+CVIRT_DIR="$DEPS/cviruntime"
+if [ ! -f "$CVIRT_DIR/.ready" ]; then
+    say "cviruntime: $CVIRT_REPO @ $CVIRT_COMMIT (headers)"
+    rm -rf "$CVIRT_DIR"
+    mkdir -p "$CVIRT_DIR/include" "$CVIRT_DIR/lib"
+    git -C "$CVIRT_DIR" init -q
+    git -C "$CVIRT_DIR" remote add origin "$CVIRT_REPO"
+    git -C "$CVIRT_DIR" fetch -q --depth 1 origin "$CVIRT_COMMIT" || \
+        die "cannot fetch $CVIRT_REPO"
+    git -C "$CVIRT_DIR" checkout -q FETCH_HEAD
+    for h in cviruntime.h cvitpu_debug.h; do
+        [ -f "$CVIRT_DIR/include/$h" ] || \
+            die "cviruntime header missing: $h"
+    done
+    for lib in libcviruntime.so libcvikernel.so; do
+        src="$SDK_DIR/sample/3rd/tpu/lib/$lib"
+        [ -f "$src" ] || die "SDK is missing $lib"
+        cp -L "$src" "$CVIRT_DIR/lib/$lib"
+    done
+    touch "$CVIRT_DIR/.ready"
+fi
 
 if [ ! -f "$OCV_DIR/.ready" ]; then
     say "OpenCV source: $OCV_URL"
@@ -153,6 +185,7 @@ cat <<EOF
 Dependencies are ready:
   TOOLCHAIN_PATH=$TC_DIR
   CVISDK_PATH=$SDK_DIR
+  CVIRUNTIME_PATH=$CVIRT_DIR
   OPENCV_SRC=$OCV_DIR
   OPENCV_INSTALL=$DEPS/opencv-install
 

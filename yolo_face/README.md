@@ -11,9 +11,9 @@ scripts, so no cross-compilation is needed to run it.
 | Item | Location |
 |---|---|
 | Sources | `src/` |
-| Ready-to-run package | `yolo_face-board.tar.gz` from Releases (binary, runtime, models, scripts) |
-| Runtime skeleton | `dist/board/runtime/` (vendor libraries and musl loader) |
-| TDL models | `dist/board/models/face/` |
+| Ready-to-run package | `yolo_face-board.tar.gz` from Releases (binary, scripts; no vendor files, no models) |
+| Runtime skeleton | `dist/board/runtime/` — empty in git; `install.sh` fills it from the board firmware |
+| TDL models | `dist/board/models/face/` — empty in git; upload your own or use the ones on the board |
 | Start/stop scripts | `dist/board/start_face.sh`, `dist/board/run_face.sh` |
 | SSH installer | `install.sh` (downloads the latest release by default) |
 | Build | `CMakeLists.txt`, `cmake/`, `scripts/`, `patches/`, `../scripts/package-board.sh` |
@@ -24,10 +24,12 @@ Linking them directly mixes two OpenCV implementations and crashes. That is
 why `libcvi_tdl.so`, `libcnpy.so`, `libcvi_ive.so` and shared OpenCV 3.2 are
 placed together in the runtime.
 
-The patched middleware build `libvpu_tdl.so` is needed only by TDL (for GDC
-symbols). VPSS/VI use the system `libvpu.so` from `/mnt/system/usr/lib`, which
-matches the firmware driver. Both libraries are visible in `/proc/PID/maps` at
-the same time; this is expected.
+The patched middleware build `libvpu_tdl.so` is optional: TDL uses a few GDC
+symbols that the stock `libvpu.so` also provides, so without the patched file
+the application falls back to `/mnt/system/usr/lib/libvpu.so`, which matches
+the firmware driver. Put `libvpu_tdl.so` into `runtime/` only if you have a
+build that is known to work with your firmware; `run_face.sh` then points
+`SY_VPU_LIB` at it.
 
 ## Installing on the board
 
@@ -61,9 +63,14 @@ Wi-Fi, Ethernet). By default the installer:
 6. optionally applies `../tpu-fix/patch_tpu.sh`;
 7. does **not** add an autostart entry.
 
-The package already contains the binary, face models, vendor libraries and a
-matching musl loader/libc. Use `PAYLOAD_DIR` to install a locally built
-package instead of downloading one.
+The archive contains only this project's binary and scripts. After the upload
+the installer copies the vendor runtime from the firmware
+(`/mnt/system/lib`, `/mnt/system/usr/lib`, `/mnt/system/usr/lib/3rd`) into
+`/root/yolo_face/runtime`, including `libcvi_tdl`, its shared OpenCV 3.2
+dependencies and `libz`. Models are uploaded from `MODELS_DIR` or
+`../vendor/models`; without them the models already on the board are used.
+Use `PAYLOAD_DIR` to install a locally built package instead of downloading
+one.
 
 The camera is configured by the stock image through `/mnt/data/sensor_cfg.ini`
 (sensor I2C address and MIPI `lane_id`). The scripts do not touch pinmux or
@@ -79,6 +86,21 @@ tar -xzf yolo_face-board.tar.gz -C /tmp/yolo_face-package
 tar -C /tmp/yolo_face-package -cf - . | \
     ssh root@<IP> 'rm -rf /root/yolo_face; mkdir -p /root/yolo_face; tar -xf - -C /root/yolo_face'
 ssh root@<IP> 'chmod +x /root/yolo_face/face_stream /root/yolo_face/*.sh'
+```
+
+Then copy the vendor libraries from the firmware (this is what `install.sh`
+automates):
+
+```sh
+ssh root@<IP> 'mkdir -p /root/yolo_face/runtime && cd /root/yolo_face/runtime &&
+  for n in libcviruntime.so libcvikernel.so libvenc.so libsys.so libisp.so libisp_algo.so \
+           libae.so libawb.so libsns_gc4653.so libcvi_bin.so libcvi_bin_isp.so \
+           libcvi_tdl.so libcvimath.so libcnpy.so libcvi_ive.so libz.so.1.2.11 \
+           libopencv_core.so.3.2 libopencv_imgproc.so.3.2 libopencv_imgcodecs.so.3.2; do
+    for d in /mnt/system/lib /mnt/system/usr/lib /mnt/system/usr/lib/3rd; do
+      [ -f "$d/$n" ] && cp -L "$d/$n" . && break
+    done
+  done'
 ```
 
 ## Running
@@ -104,22 +126,22 @@ hang). A normal exit via SIGINT is not restarted.
 
 ### Loader and libraries
 
-The release package is self-contained: `run_face.sh` sets `LD_LIBRARY_PATH`
-to `runtime/` and starts the binary through `runtime/ld-musl-riscv64.so.1` by
-default. The bundled loader and libc come from the same toolchain as the
-binary, so no system musl version is required.
+The binary is a musl executable and runs on the loader and libc of the
+firmware. `run_face.sh` puts, in this order, the copies in `runtime/`, then the
+firmware directories, into `LD_LIBRARY_PATH`:
 
-```sh
-# default: bundled loader + bundled libraries
-/root/yolo_face/start_face.sh start
-
-# opt out and use the system /lib/ld-musl-riscv64.so.1
-SY_BUNDLED_LOADER=0 /root/yolo_face/start_face.sh start
+```
+runtime/  /mnt/system/usr/lib  /mnt/system/usr/lib/3rd  /mnt/system/lib  /usr/lib
 ```
 
-When the binary is started explicitly through the loader, the process `comm`
-becomes `ld-musl-riscv64`, so `start_face.sh` stores the pid in
-`/tmp/yolo_face.app.pid` instead of looking the process up via `pidof`.
+A bundled loader is used only if you place one in `runtime/` and opt in:
+
+```sh
+SY_BUNDLED_LOADER=1 /root/yolo_face/start_face.sh start
+```
+
+`start_face.sh` stores the pid in `/tmp/yolo_face.app.pid`, so it works with
+both the system loader and an explicit one.
 
 ## How it works
 
@@ -185,26 +207,33 @@ checkout), without examples and binaries.
 
 The same build can be run on GitHub: **Actions** tab → **build** →
 **Run workflow**. The run produces `yolo_face-bin` (the bare binary) and
-`yolo_face-board` (a complete self-contained tarball) artifacts. Pushing a
+`yolo_face-board` (binary + scripts, no vendor files) artifacts. Pushing a
 `v*` tag publishes both release assets automatically.
 
 To create the complete package locally after a build:
 
 ```sh
-../scripts/package-board.sh yolo_face build/bin/face_stream \
-    .deps/riscv64-linux-musl-cross ../out
+../scripts/package-board.sh yolo_face build/bin/face_stream ../out
 ```
+
+The archive contains the binary, the scripts and an empty `models/face/`
+directory. To embed the vendor files for a private, offline archive, add
+`--with-vendor ../vendor` (do not publish that archive).
 
 ## Models and licenses
 
-The `scrfd_det_face_432_768`, `feature_cviface_112_112` and
-`cls_rgbliveness_256_256` models come from the TDL SDK examples. There is no
-license file for `milkv-duo/cvitek-tdl-sdk-sg200x`; they are distributed as
-is, without warranty. `libcvi_tdl.so`, `libcnpy.so`, `libcvi_ive.so`,
-`libcviruntime.so`, `libcvikernel.so`, `libcvimath.so` and `libvpu_tdl.so` are
-vendor binaries from Cvitek/Sophgo without an explicit license in the source.
-Details and links are in `../THIRD_PARTY_NOTICES.md`; this is not "licensed"
-code, but a ready-to-run package for the board.
+The repository does not ship the `scrfd_det_face_432_768`,
+`feature_cviface_112_112` and `cls_rgbliveness_256_256` models: they come from
+the TDL SDK examples and have no license file. They are already present in
+`/mnt/system/usr/bin/ai/models` on a stock image; `install.sh` uploads them
+from `MODELS_DIR` when you point it there. See
+[`../models/README.md`](../models/README.md).
+
+The vendor libraries the application loads at run time (`libcvi_tdl.so`,
+`libcnpy.so`, `libcvi_ive.so`, `libcviruntime.so`, `libcvikernel.so`,
+`libcvimath.so`, shared OpenCV 3.2, `libz`) are copied from the board firmware
+during installation, not from this repository. Details and links are in
+`../THIRD_PARTY_NOTICES.md`.
 
 OpenCV 4.13 (static, for the application) is distributed under Apache-2.0;
 OpenCV 3.2 (shared, for TDL) under BSD-3-Clause. The camera patch is applied

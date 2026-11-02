@@ -19,7 +19,15 @@ DEPS=${DEPS_DIR:-"$ROOT/.deps"}
 
 TOOLCHAIN_PATH=${TOOLCHAIN_PATH:-"$DEPS/riscv64-linux-musl-cross"}
 CVISDK_PATH=${CVISDK_PATH:-"$DEPS/cvitek-tdl-sdk-sg200x"}
-CVIRUNTIME_PATH=${CVIRUNTIME_PATH:-"$ROOT/third_party/cviruntime"}
+# cviruntime headers and libraries: the downloaded deps, the shared vendor/
+# directory filled by scripts/fetch-vendor.sh, or a local checkout.
+if [ -z "${CVIRUNTIME_PATH:-}" ]; then
+    for d in "$DEPS/cviruntime" "$ROOT/../vendor/cviruntime" \
+             "$ROOT/third_party/cviruntime"; do
+        [ -f "$d/include/cviruntime.h" ] && { CVIRUNTIME_PATH=$d; break; }
+    done
+fi
+CVIRUNTIME_PATH=${CVIRUNTIME_PATH:-"$DEPS/cviruntime"}
 OpenCV_DIR=${OpenCV_DIR:-"$DEPS/opencv-install/lib/cmake/opencv4"}
 BUILD_DIR=${BUILD_DIR:-"$ROOT/build"}
 

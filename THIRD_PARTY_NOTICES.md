@@ -1,200 +1,151 @@
-# Third-party components, authors and licenses
+# Third-party components
 
-This file describes the third-party code, binaries and models that are
-included in the repository or downloaded during the build. Full license texts
-are in `LICENSES/`. Components without an explicit license are called out
-separately: such files are distributed "as is", and their terms must be
-clarified with the rights holder before commercial use.
+This repository contains **only original code** (MIT, see `LICENSE`). It does
+not redistribute vendor binaries, vendor headers or converted models: the
+Cvitek/Sophgo runtime and the `.cvimodel` files are proprietary or carry
+licenses that do not allow us to publish them.
 
-Snapshot date: 2026-10-28.
+Everything third-party is either downloaded by the user at build time, copied
+from the user's own board, or installed from the Python package index. This
+file lists those components, their licenses and where they come from. Full
+license texts are in `LICENSES/`.
 
-## Summary
+Snapshot date: 2026-11-02.
 
-| Component | Author / source | License | Location |
+## What is in the repository
+
+| Category | Contents | License |
+|---|---|---|
+| Board applications | `yolo_stream/`, `yolo_face/` sources and scripts | MIT |
+| Desktop studio | `yolo_studio/` sources | MIT |
+| Camera patch | `*/patches/opencv-mobile-4.13.0-cvi-capture.patch` | Apache-2.0 (derivative of opencv-mobile) |
+| TPU timeout fix | `tpu-fix/patch_tpu.sh` | MIT (patches a GPL-2.0 module on the user's device) |
+| Docs, CI | `README.md`, `docs/`, `.github/workflows/` | MIT |
+
+No `.so`, `.cvimodel`, `.ko`, `.a` or other vendor binary is tracked in git,
+and none is uploaded to the releases. `vendor/`, `*/dist/board/runtime/` and
+`*/third_party/cviruntime/` are ignored by git on purpose.
+
+## Vendor libraries and models: how they get to your board
+
+`scripts/fetch-vendor.sh` collects the files the applications need from a
+source **you** control, on your machine:
+
+| Source | Command | Notes |
+|---|---|---|
+| Your board over SSH | `scripts/fetch-vendor.sh --board <IP>` | Copies the libraries that the stock firmware already ships (`/mnt/system/lib`, `/mnt/system/usr/lib`, `/mnt/system/usr/lib/3rd`) and the models present on the board |
+| A vendor SDK/image you downloaded | `scripts/fetch-vendor.sh --sdk <dir>` | Same files from an extracted `cvitek-tdl-sdk-sg200x` checkout or a firmware tree |
+| Your own models | `scripts/fetch-vendor.sh --models <dir>` | `.cvimodel` files you exported with `yolo_studio` |
+| Upstream Sophgo/Milk-V repositories | `scripts/fetch-vendor.sh --download` | The parts Sophgo publishes on GitHub: middleware and TPU libraries, `cviruntime` headers, the SDK example models |
+
+`yolo_stream/install.sh` and `yolo_face/install.sh` repeat the board step
+during installation: they copy the vendor libraries from the board firmware
+into `$DEST/runtime` and upload whatever models are in `MODELS_DIR` (or in
+`vendor/models`). Nothing vendor-specific is transferred between machines by
+this project.
+
+## Components downloaded at build time
+
+| Component | Source | License | Used for |
 |---|---|---|---|
-| opencv-mobile 4.13.0 (v36) | nihui, OpenCV team | Apache-2.0 | downloaded by `scripts/fetch-deps.sh` |
-| OpenCV 4.13 (inside opencv-mobile) | OpenCV team | Apache-2.0 | statically linked into `stream_yolo`, `face_stream` |
-| CVI backend patch | derivative of opencv-mobile | Apache-2.0 | `yolo_stream/patches/`, `yolo_face/patches/` |
-| OpenCV 3.2 (shared) | OpenCV team | BSD-3-Clause | `yolo_face/dist/board/runtime/libopencv_*.so.3.2` |
-| cvitek-tdl-sdk-sg200x | milkv-duo / Sophgo | no license file | headers, `libvenc.so`, `libsys.so` during the build |
-| cviruntime / cvikernel | Sophgo | no license file | `*/third_party/cviruntime/` |
-| libcvi_tdl.so | Cvitek / Sophgo TDL SDK | no license file | `yolo_face/dist/board/runtime/` |
-| libcvi_ive.so, libcnpy.so, libcvimath.so | Cvitek / Sophgo TDL SDK | no license file | `yolo_face/dist/board/runtime/` |
-| libvpu_tdl.so (patched middleware) | Cvitek / Sophgo | no license file | `yolo_face/dist/board/runtime/` |
-| middleware (ISP/VPSS/VENC/…) | Cvitek / Sophgo | no license file | `yolo_stream/dist/board/runtime/`, `yolo_face/.../runtime/` |
-| libz 1.2.11 | Jean-loup Gailly, Mark Adler | Zlib | `yolo_face/.../runtime/libz.so.1.2.11` |
-| musl loader | Rich Felker and musl contributors | MIT | `*/dist/board/runtime/ld-musl-riscv64.so.1` |
-| libstdc++, libgcc, libatomic | GCC / FSF | GPL-3.0 + GCC Runtime Library Exception | `*/dist/board/runtime/` |
-| YOLOv8n models (6) | derivatives of Ultralytics YOLOv8n | AGPL-3.0 | `yolo_stream/dist/board/models/` |
-| YOLO11n drone model | derivative of Ultralytics YOLO11n | AGPL-3.0 | `yolo_stream/dist/board/models/yolov11n_det_drone_640_640_INT8_cv181x.cvimodel` |
-| SCRFD face detector | InsightFace (architecture), Cvitek TDL SDK (weights) | code MIT; weights without an explicit license | `yolo_face/dist/board/models/face/` |
-| cviface / liveness | Cvitek TDL SDK | no license file | `yolo_face/dist/board/models/face/` |
-| ret7020/LicheeRVNano | ret7020 | no license file; code rewritten | README reference only |
-| PySide6 | Qt Company / Qt contributors | LGPL-3.0 / GPL-3.0 / commercial | `yolo_studio` dependency (not included) |
-| opencv-python-headless | OpenCV team | Apache-2.0 | `yolo_studio` dependency |
-| numpy | NumPy developers | BSD-3-Clause | `yolo_studio` dependency |
-| paramiko | Jeff Forcier and contributors | LGPL-2.1 | `yolo_studio` dependency |
-| PyYAML | Kirill Simonov and contributors | MIT | `yolo_studio` dependency |
-| Ultralytics (ultralytics) | Ultralytics | AGPL-3.0 | external `ultra` environment |
-| tpu-mlir | Sophgo | Apache-2.0 | external `tpu310` environment |
-| soph_tpu.ko | Sophgo | GPL-2.0 | **not included** in the repository; patched on the board |
+| opencv-mobile 4.13.0 (v36) | [nihui/opencv-mobile](https://github.com/nihui/opencv-mobile) | Apache-2.0 | static OpenCV with the CVI camera backend |
+| OpenCV 4.13.0 (inside opencv-mobile) | [opencv.org](https://opencv.org/releases/) | Apache-2.0 | linked into `stream_yolo`, `face_stream` |
+| cvitek-tdl-sdk-sg200x | [milkv-duo](https://github.com/milkv-duo/cvitek-tdl-sdk-sg200x) @ `02dfb90` | **no license file** | middleware headers, `libvenc.so`, `libsys.so`, prebuilt `libcviruntime.so`/`libcvikernel.so` at build time |
+| cviruntime headers | [sophgo/cviruntime](https://github.com/sophgo/cviruntime) @ `ef80449` | **no license file** | `cviruntime.h`, `cvitpu_debug.h` |
+| RISC-V musl toolchain | [musl-cross 20261001](https://github.com/musl-cross/musl-cross/releases/tag/20261001) | GPL-3.0 / LGPL-2.1 / MIT + exceptions | cross compiler (build tool only) |
+| tpu-mlir | [sophgo/tpu-mlir](https://github.com/sophgo/tpu-mlir) | Apache-2.0 | conversion to `.cvimodel` (installed by the user) |
 
-## OpenCV and the CVI camera backend
-
-`opencv-mobile-4.13.0.zip` is the official
-[nihui/opencv-mobile v36](https://github.com/nihui/opencv-mobile/releases/tag/v36)
-release (archive `opencv-mobile-4.13.0.zip`, SHA256
-`0aeaea4837d19894765aae23cb82fc4b87cec07449bee4b4404a63bdda15d6ee`).
-The project is distributed under Apache-2.0; it contains OpenCV 4.13.0
-(Apache-2.0).
-
-The `patches/opencv-mobile-4.13.0-cvi-capture.patch` patches modify
-`modules/highgui/src/capture_cvi.cpp` and `videocapture.cpp` from the same
-archive, so they are derivatives and are distributed under Apache-2.0. The
-patch adds a raw NV21 mode (`OPENCV_CVI_RAW`), reads the sensor geometry from
-`/mnt/data/sensor_cfg.ini`, recovers a stuck VPSS group, and supports the
-required frame sizes.
-
-`libopencv_core.so.3.2`, `libopencv_imgproc.so.3.2` and
-`libopencv_imgcodecs.so.3.2` in the `yolo_face` runtime are a shared build of
-OpenCV 3.2.0. OpenCV 3.2 itself is distributed under BSD-3-Clause (text in
-`LICENSES/BSD-3-Clause.txt`). These are prebuilt libraries from the
-Cvitek/TDL SDK package; OpenCV 3.2 sources are available at
-[opencv.org](https://opencv.org/releases/). They are needed only by
-`libcvi_tdl.so`; the `face_stream` application is built with static OpenCV
-4.13.
-
-## Cvitek / Sophgo SDK and vendor libraries
-
-- [milkv-duo/cvitek-tdl-sdk-sg200x](https://github.com/milkv-duo/cvitek-tdl-sdk-sg200x),
-  commit `02dfb9091d390a7b0d1177fe7b651db1b99854bc`. The middleware v2 and
-  `cvi_tdl` headers are used, along with `libvenc.so`/`libsys.so`; they are
-  downloaded by `scripts/fetch-deps.sh` (sparse checkout). **There is no
-  license file in the repository.**
-- [sophgo/cviruntime](https://github.com/sophgo/cviruntime) — the
-  `cviruntime.h` and `cvitpu_debug.h` headers and the `libcviruntime.so` and
-  `libcvikernel.so` libraries (`third_party/cviruntime/`). **There is no
-  license file in the repository.**
-- Cvitek/Sophgo binaries in `dist/board/runtime/`: `libcvi_tdl.so`,
-  `libcvi_ive.so`, `libcnpy.so`, `libcvimath.so`, `libvpu_tdl.so`,
-  `libisp.so`, `libisp_algo.so`, `libae.so`, `libawb.so`, `libvenc.so`,
-  `libsys.so`, `libsns_gc4653.so`, `libcvi_bin.so`, `libcvi_bin_isp.so`.
-  This is the vendor runtime for cv181x/SG2002; **there is no explicit
-  license in the source**, and the files are included to run on the
-  corresponding board "as is", without warranty. `libvpu_tdl.so` is a renamed
-  patched build of the TDL SDK middleware `libvpu.so` (TDL needs it for GDC
-  symbols); the system `libvpu.so` is not included and is taken from the
-  board.
-- `libcvi_tdl.so` comes from the TDL SDK, md5
-  `5284ac664ef5330bacbac1fdb6de70ea`. It is built against shared OpenCV 3.2
-  and loaded via `dlopen`, so `libopencv_*.so.3.2`, `libcnpy.so`,
-  `libcvi_ive.so` and `libz` are placed next to it.
-- `libz.so.1.2.11` is zlib 1.2.11 under the Zlib license
-  (`LICENSES/Zlib.txt`); it is used by `libcvi_tdl.so`/`libcnpy.so`.
+The SDK and `cviruntime` files are fetched into `.deps/` or `vendor/` and are
+used **only on the machine that builds**; they are not committed and not part
+of any release archive. If you build with `--with-vendor`, the resulting
+archive is for your own use — do not publish it.
 
 ## Models
 
-### YOLOv8n / YOLO11n (detection)
+The repository ships **no model weights**. There are three ways to get
+`.cvimodel` files:
 
-The six `yolov8n_det_*` models are INT8 conversions of Ultralytics YOLOv8n
-networks (COCO-80, person/vehicle, helmet, traffic light, license plate,
-fire/smoke). The `yolov11n_det_drone_640_640` model is a derivative of
-Ultralytics YOLO11n (1 class), fine-tuned by the repository author; the
-package contains one version, md5 `d479ed5849723b9137d71fd18cc3d4ba`.
+1. **Export your own** with `yolo_studio` → training → ONNX → tpu-mlir. If the
+   starting point is an Ultralytics checkpoint (YOLOv8/YOLO11), the weights
+   and the converted model are **AGPL-3.0** (`LICENSES/AGPL-3.0.txt`):
+   publishing them means publishing the corresponding source (a `.pt` file is
+   not source; provide the training data, configuration and scripts).
+2. **Use the models already on the board** —
+   `/mnt/system/usr/bin/ai/models`. They come with the vendor firmware; the
+   project does not redistribute them.
+3. **Use the SDK example models** fetched by `scripts/fetch-vendor.sh
+   --download` (`yolov5_cv181x_int8_*.cvimodel`, `scrfd_768_432_int8_1x`).
+   The SDK has **no license file**; check with Sophgo before redistributing
+   them.
 
-Ultralytics YOLO is distributed under **AGPL-3.0**
-(`LICENSES/AGPL-3.0.txt`). We also consider the derivative weights and the
-converted `.cvimodel` files to be AGPL-3.0. If you distribute these files
-(including as part of firmware or a closed-source product), you must comply
-with the AGPL: provide recipients with the corresponding source code (the
-preferred form is `.pt`/ONNX plus the conversion scripts) and keep the
-notices. The original YOLOv8n/YOLO11n weights are available from Ultralytics;
-the conversion pipeline is in `yolo_studio/tools/` (`export_yolo11.py`,
-`build_cvimodel.sh`). Datasets and user frames are not part of the
-repository.
+Face models (`scrfd_det_face_*`, `feature_cviface_*`,
+`cls_rgbliveness_*`) come from the Cvitek TDL SDK examples. The SCRFD
+architecture is MIT (InsightFace), the weights have no stated license.
 
-### Faces (SCRFD, cviface, liveness)
+## yolo_studio dependencies
 
-`scrfd_det_face_432_768_INT8_cv181x.cvimodel` is a face detector based on the
-SCRFD architecture. The architecture and InsightFace code are distributed
-under MIT (`LICENSES/MIT.txt`); the weights in this package come from the
-Cvitek TDL SDK examples (the SDK contains
-`cvimodel/scrfd_768_432_int8_1x.cvimodel`). The distribution terms for the
-weights are not stated in the source.
+Installed from PyPI by `requirements.txt` (not vendored):
 
-`feature_cviface_112_112_INT8_cv181x.cvimodel` (face embeddings) and
-`cls_rgbliveness_256_256_INT8_cv181x.cvimodel` (liveness) are Cvitek TDL SDK
-models. **There is no explicit license in the source.** They are included
-because `yolo_face` needs them; they are distributed "as is", without
-warranty. Clarify the rights with Cvitek/Sophgo before commercial use or
-redistribution.
+| Package | License |
+|---|---|
+| PySide6 / Qt 6 | LGPL-3.0 (or GPL-3.0 / commercial) |
+| opencv-python-headless | Apache-2.0 |
+| numpy | BSD-3-Clause |
+| paramiko | LGPL-2.1 |
+| PyYAML | MIT |
 
-## System libraries in the runtime
+The release archives include `LGPL-3.0.txt` and this file. PySide6 is used
+under the LGPL: the libraries are shipped as separate, replaceable files in
+the one-folder build, and the sources are available from
+[qt.io](https://www.qt.io/) and the PySide6 wheel on PyPI. The one-file build
+bundles them for convenience; the same sources and the build script
+(`tools/build_desktop.py`) are published here, so the libraries can be rebuilt
+or replaced.
 
-- `ld-musl-riscv64.so.1` — musl libc, MIT (`LICENSES/MIT.txt`). It is bundled
-  with the board release packages and used by default so the loader, `libc`
-  and the binary always come from the same toolchain. Set
-  `SY_BUNDLED_LOADER=0` to use the system `/lib/ld-musl-riscv64.so.1`.
-- `libstdc++.so.6`, `libgcc_s.so.1`, `libatomic.so.1` — GCC runtime libraries
-  taken from the same toolchain as the board binary. Licensed under GPL-3.0
-  with the GCC Runtime Library Exception (`LICENSES/GPL-3.0.txt`,
-  `LICENSES/GCC-Runtime-Library-Exception.txt`). The exception allows
-  distributing programs linked against these libraries under any terms.
+### The `-full` Studio bundle
 
-## Build tools
+The `yolo_studio-*-full` archives additionally contain:
 
-`scripts/fetch-deps.sh` downloads the RISC-V musl toolchain from GitHub:
-[musl-cross 20261001](https://github.com/musl-cross/musl-cross/releases/tag/20261001),
-`riscv64-unknown-linux-musl.tar.xz` (SHA256
-`054acc4b5baa886363ce5acaa6a015fd90d2f715b2e4324813fd4d49d717362f`).
-It contains GCC, binutils and musl, distributed under GPL-3.0/LGPL-2.1/MIT
-with the corresponding exceptions. The toolchain is not part of the
-repository and is used only at build time. The `musl.cc`
-`riscv64-linux-musl-cross` (GCC 11.2.1) toolchain is also supported via the
-`TOOLCHAIN_URL` variable.
+| Component | License | Source |
+|---|---|---|
+| ultralytics | AGPL-3.0 | [ultralytics/ultralytics](https://github.com/ultralytics/ultralytics) |
+| PyTorch, torchvision | BSD-3-Clause | [pytorch.org](https://pytorch.org/) |
+| onnx, onnxruntime | Apache-2.0 / MIT | [onnx.ai](https://onnx.ai/) |
 
-## yolo_studio (Python)
-
-`yolo_studio/requirements.txt` installs dependencies from PyPI; their sources
-are not included in the repository:
-
-- PySide6 — LGPL-3.0 / GPL-3.0 / commercial Qt license
-  (`LICENSES/LGPL-3.0.txt`);
-- opencv-python-headless — Apache-2.0;
-- numpy — BSD-3-Clause;
-- paramiko — LGPL-2.1 (`LICENSES/LGPL-2.1.txt`);
-- PyYAML — MIT.
-
-The README also recommends external environments:
-
-- Ultralytics (`ultra`) — AGPL-3.0, used for training/export;
-- tpu-mlir (`tpu310`) — Apache-2.0, used to build `.cvimodel` files.
-
-These packages are not part of the repository and are installed by the user
-separately.
+The Studio calls the ultralytics command line as a separate process
+(`--yolo-cli`), so the application and the model tooling are separate
+programs that are merely distributed together. The AGPL-3.0 text is in
+`LICENSES/AGPL-3.0.txt`; the exact versions are listed in the archive's
+`THIRD_PARTY_NOTICES.md`. If you modify ultralytics and redistribute the
+bundle, you must publish your modified sources under the AGPL.
 
 ## tpu-fix and the GPL module
 
 `tpu-fix/patch_tpu.sh` changes a few bytes in the `soph_tpu.ko` module
-**already installed on the board**. The module itself is part of the Sophgo
-firmware and is distributed under GPL-2.0 (`LICENSES/GPL-2.0.txt`). The
-repository contains neither the `.ko` nor the driver sources: the patcher
-only changes the timeout in the binary on the user's device and creates a
-backup. The script does not link against the module and is not a derivative
-of the driver.
+**already installed on the board**. The module is part of the Sophgo firmware
+and is distributed under GPL-2.0 (`LICENSES/GPL-2.0.txt`). The repository
+contains neither the `.ko` nor the driver sources: the patcher only changes
+the timeout in the binary on the user's device and keeps a backup.
+
+## Runtime libraries on the board
+
+The board applications are musl binaries and use the loader, libc and vendor
+libraries of the firmware. `run_stream.sh` / `run_face.sh` put
+`$DEST/runtime` (the copies made by `install.sh`) in front of
+`/mnt/system/usr/lib`, `/mnt/system/usr/lib/3rd` and `/mnt/system/lib`.
+Nothing from those directories is published by this project.
 
 ## Background and references
 
-The `stream_yolo` project was originally inspired by
-[ret7020/LicheeRVNano](https://github.com/ret7020/LicheeRVNano). That
-repository **has no license file**, so its code was not copied as is: the
-current implementation is rewritten, and the upstream project is credited as
-the source of the idea and of useful CV181x examples. If you reuse upstream
-code, clarify the terms with the author first.
+`stream_yolo` was inspired by
+[ret7020/LicheeRVNano](https://github.com/ret7020/LicheeRVNano), which has
+**no license file**; its code was not copied. The current implementation is a
+rewrite, and the upstream project is credited as the source of the idea and
+of useful CV181x examples.
 
 ## Warranty
 
-All third-party binaries and models are provided **without warranty**, "as
-is". Their functionality was tested only on the LicheeRV Nano (SG2002/CV181x)
-with the GC4653 camera and a specific firmware. The rights holders are not
-affiliated with this repository and do not support it.
+Third-party components are provided **without warranty**, "as is", by their
+respective authors. This project was tested only on a LicheeRV Nano
+(SG2002/CV181x) with the GC4653 camera and specific firmware versions. The
+rights holders are not affiliated with this repository and do not support it.

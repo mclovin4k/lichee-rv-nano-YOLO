@@ -60,7 +60,6 @@ jobs:
           scripts/package-board.sh \
             "${{ matrix.project }}" \
             "${{ matrix.project }}/build/bin/${{ matrix.binary }}" \
-            "${{ matrix.project }}/.deps/riscv64-linux-musl-cross" \
             out
 
       - name: Upload binary
@@ -87,23 +86,23 @@ jobs:
           {
             echo "### ${{ matrix.project }}"
             echo ""
-            echo "Binary: \`${{ matrix.project }}-bin\`"
-            echo "Board bundle: \`${{ matrix.project }}-board\`"
-            echo ""
             echo '```'
-            ls -lh "${{ matrix.project }}/build/bin" out
+            ls -lh out
+            tar -tzf "out/${{ matrix.project }}-board.tar.gz"
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
   studio-linux:
     name: yolo_studio (Linux x86_64)
     runs-on: ubuntu-22.04
-    timeout-minutes: 30
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+          cache: pip
+          cache-dependency-path: yolo_studio/requirements.txt
 
       - name: Install Qt/X11 runtime libraries
         run: |
@@ -120,41 +119,77 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt pyinstaller
 
-      - name: Build standalone executable
+      - name: Build slim one-file executable
         working-directory: yolo_studio
-        run: python tools/build_desktop.py
+        run: python tools/build_desktop.py --mode onefile
 
-      - name: Smoke test (offscreen)
+      - name: Smoke test slim build
         working-directory: yolo_studio
         run: |
-          QT_QPA_PLATFORM=offscreen timeout 30s ./dist/LicheeYOLOStudio --smoke-test
+          QT_QPA_PLATFORM=offscreen timeout 60s ./dist/LicheeYOLOStudio --smoke-test
 
-      - name: Package Linux release
+      - name: Package slim build
         working-directory: yolo_studio
         run: |
           mkdir -p ../out
-          tar -C dist -czf ../out/yolo_studio-linux-x86_64.tar.gz LicheeYOLOStudio
+          stage=$(mktemp -d)
+          cp dist/LicheeYOLOStudio "$stage/"
+          cp ../LICENSES/LGPL-3.0.txt ../THIRD_PARTY_NOTICES.md "$stage/"
+          tar -C "$stage" -czf ../out/yolo_studio-linux-x86_64.tar.gz .
+          rm -rf "$stage"
           cd ../out
           sha256sum yolo_studio-linux-x86_64.tar.gz > yolo_studio-linux-x86_64.tar.gz.sha256
 
-      - name: Upload Linux package
+      - name: Install ML stack for the full build
+        run: |
+          # CPU-only torch: the PyPI Linux wheel pulls several GB of CUDA.
+          python -m pip install torch torchvision \
+            --index-url https://download.pytorch.org/whl/cpu
+          python -m pip install ultralytics
+
+      - name: Build full one-folder bundle (torch inside)
+        working-directory: yolo_studio
+        run: python tools/build_desktop.py --mode onedir --with-ml
+
+      - name: Smoke test full build
+        working-directory: yolo_studio
+        run: |
+          QT_QPA_PLATFORM=offscreen timeout 60s \
+            ./dist/LicheeYOLOStudio-full/LicheeYOLOStudio-full --smoke-test
+          timeout 300s ./dist/LicheeYOLOStudio-full/LicheeYOLOStudio-full --have-ml
+
+      - name: Package full build
+        working-directory: yolo_studio
+        run: |
+          mkdir -p ../out
+          tar -C dist -czf ../out/yolo_studio-linux-x86_64-full.tar.gz \
+            LicheeYOLOStudio-full
+          cd ../out
+          sha256sum yolo_studio-linux-x86_64-full.tar.gz \
+            > yolo_studio-linux-x86_64-full.tar.gz.sha256
+          ls -lh
+
+      - name: Upload Linux packages
         uses: actions/upload-artifact@v4
         with:
           name: yolo_studio-linux
           path: |
-            out/yolo_studio-linux-x86_64.tar.gz
-            out/yolo_studio-linux-x86_64.tar.gz.sha256
+            out/yolo_studio-linux-x86_64*.tar.gz
+            out/yolo_studio-linux-x86_64*.sha256
           if-no-files-found: error
+          retention-days: 14
 
   studio-windows:
     name: yolo_studio (Windows x86_64)
     runs-on: windows-latest
-    timeout-minutes: 30
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+          cache: pip
+          cache-dependency-path: yolo_studio/requirements.txt
 
       - name: Install Python dependencies
         working-directory: yolo_studio
@@ -162,11 +197,11 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt pyinstaller
 
-      - name: Build standalone executable
+      - name: Build slim one-file executable
         working-directory: yolo_studio
-        run: python tools/build_desktop.py
+        run: python tools/build_desktop.py --mode onefile
 
-      - name: Smoke test (offscreen)
+      - name: Smoke test slim build
         working-directory: yolo_studio
         shell: pwsh
         run: |
@@ -177,12 +212,62 @@ jobs:
             throw "smoke test failed with exit code $($p.ExitCode)"
           }
 
-      - name: Upload Windows executable
+      - name: Package slim build
+        working-directory: yolo_studio
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path ..\out | Out-Null
+          $stage = Join-Path $env:RUNNER_TEMP "stage-slim"
+          New-Item -ItemType Directory -Force -Path $stage | Out-Null
+          Copy-Item dist\LicheeYOLOStudio.exe $stage
+          Copy-Item ..\LICENSES\LGPL-3.0.txt, ..\THIRD_PARTY_NOTICES.md $stage
+          tar -C $stage -czf ..\out\yolo_studio-windows-x86_64.tar.gz .
+          Get-FileHash ..\out\yolo_studio-windows-x86_64.tar.gz -Algorithm SHA256 |
+            ForEach-Object { "$($_.Hash.ToLower())  yolo_studio-windows-x86_64.tar.gz" } |
+            Set-Content -Encoding ascii ..\out\yolo_studio-windows-x86_64.tar.gz.sha256
+
+      - name: Install ML stack for the full build
+        run: python -m pip install ultralytics
+
+      - name: Build full one-folder bundle (torch inside)
+        working-directory: yolo_studio
+        run: python tools/build_desktop.py --mode onedir --with-ml
+
+      - name: Smoke test full build
+        working-directory: yolo_studio
+        shell: pwsh
+        run: |
+          $env:QT_QPA_PLATFORM = "offscreen"
+          $p = Start-Process -FilePath ".\dist\LicheeYOLOStudio-full\LicheeYOLOStudio-full.exe" `
+            -ArgumentList "--smoke-test" -PassThru -Wait
+          if ($p.ExitCode -ne 0) {
+            throw "smoke test failed with exit code $($p.ExitCode)"
+          }
+          $p = Start-Process -FilePath ".\dist\LicheeYOLOStudio-full\LicheeYOLOStudio-full.exe" `
+            -ArgumentList "--have-ml" -PassThru -Wait
+          if ($p.ExitCode -ne 0) {
+            throw "the full build does not contain ultralytics (exit $($p.ExitCode))"
+          }
+
+      - name: Package full build
+        working-directory: yolo_studio
+        shell: pwsh
+        run: |
+          tar -C dist -czf ..\out\yolo_studio-windows-x86_64-full.tar.gz LicheeYOLOStudio-full
+          Get-FileHash ..\out\yolo_studio-windows-x86_64-full.tar.gz -Algorithm SHA256 |
+            ForEach-Object { "$($_.Hash.ToLower())  yolo_studio-windows-x86_64-full.tar.gz" } |
+            Set-Content -Encoding ascii ..\out\yolo_studio-windows-x86_64-full.tar.gz.sha256
+          Get-ChildItem ..\out | Format-Table Name, Length
+
+      - name: Upload Windows packages
         uses: actions/upload-artifact@v4
         with:
           name: yolo_studio-windows
-          path: yolo_studio/dist/LicheeYOLOStudio.exe
+          path: |
+            out/yolo_studio-windows-x86_64*.tar.gz
+            out/yolo_studio-windows-x86_64*.sha256
           if-no-files-found: error
+          retention-days: 14
 
   release:
     name: Publish release assets

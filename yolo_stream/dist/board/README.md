@@ -1,10 +1,14 @@
 # Board files: stream_yolo
 
 Contents of the release package: `stream_yolo` (binary), `run_stream.sh`
-(environment + loader), `start_stream.sh` (model menu and control),
-`runtime/` (libraries and musl loader), `models/` (7 YOLOv8n/YOLO11n-det
-models). The binary and the matching `libc`/loader are produced by the GitHub
-workflow and are not stored in git.
+(environment setup), `start_stream.sh` (model menu and control), an empty
+`models/` directory and `md5sums.txt`.
+
+The package deliberately contains **no vendor libraries and no models**: the
+Cvitek/Sophgo runtime is proprietary and models are usually AGPL-3.0
+derivatives of Ultralytics, so neither is redistributed. `install.sh` copies
+the libraries from the firmware of your board and uploads the models you
+choose. See `../../../THIRD_PARTY_NOTICES.md`.
 
 ## Installation
 
@@ -16,8 +20,17 @@ cd yolo_stream
 ```
 
 It downloads `yolo_stream-board.tar.gz` from the latest GitHub Release,
-verifies its checksum and copies everything to `/root/yolo_stream`. You can
-also unpack the release tarball manually and copy its contents there. Then:
+verifies its checksum, copies the files to `/root/yolo_stream` and then
+
+1. copies the vendor libraries from `/mnt/system/lib`,
+   `/mnt/system/usr/lib` and `/mnt/system/usr/lib/3rd` into
+   `/root/yolo_stream/runtime` (the firmware already has them);
+2. uploads `*.cvimodel` from `MODELS_DIR` or `../vendor/models` if either is
+   set and not empty;
+3. verifies the package checksums on the board.
+
+You can also unpack the release tarball manually, copy its contents to
+`/root/yolo_stream` and copy the libraries as described above. Then:
 
 ```sh
 /root/yolo_stream/start_stream.sh auto
@@ -49,31 +62,46 @@ and `start_face.sh start` stops `stream_yolo` itself.
 
 ## Runtime
 
-`runtime/` contains the camera/ISP/VENC/VPSS middleware libraries,
-`libvenc`/`libsys`, `libcviruntime`/`libcvikernel`, `libstdc++`/`libgcc`/
-`libatomic` and the musl loader/libc. The only libraries still taken from the
-board are the firmware-matched system `libvpu.so` and `libz.so`
-(`/mnt/system/lib`, `/mnt/system/usr/lib`).
+The binary is a musl executable and uses the loader and libc of the firmware.
+`run_stream.sh` builds `LD_LIBRARY_PATH` in this order:
 
-`run_stream.sh` sets `LD_LIBRARY_PATH` and uses the bundled loader
-(`runtime/ld-musl-riscv64.so.1`) by default, so the package works on images
-with a different or missing system musl loader. To use the system loader:
+```
+/root/yolo_stream/runtime            # copies made by install.sh
+/mnt/system/usr/lib
+/mnt/system/usr/lib/3rd
+/mnt/system/lib
+/usr/lib
+```
+
+If `runtime/` is empty or missing, the firmware libraries are used directly.
+That works on a stock image but not on a stripped one — in that case run
+`scripts/fetch-vendor.sh --board <IP>` on your workstation and upload
+`vendor/lib` to `/root/yolo_stream/runtime`.
+
+A bundled loader is used only when you put one there on purpose:
 
 ```sh
-SY_BUNDLED_LOADER=0 /root/yolo_stream/start_stream.sh restart
+SY_BUNDLED_LOADER=1 /root/yolo_stream/start_stream.sh restart
 ```
 
 ## Models
 
 Put a `*.cvimodel` file into `models/` or `/root/models` — it will appear in
-the menu. Any YOLOv8/YOLO11-det exports work (3-scale head × 64 DFL + N
+the menu. Any YOLOv8/YOLO11-det export works (3-scale head × 64 DFL + N
 classes, int8 or fp32): the binary determines the number of classes and the
 input size from the tensors itself. Models with other heads (SCRFD, pose,
 classification, etc.) are rejected with a clear log message.
 
-The drone model `yolov11n_det_drone_640_640` is a single common version
-(YOLO11n, 1 class). It is a derivative of Ultralytics YOLO11n (AGPL-3.0);
-licenses and sources are in `../../../THIRD_PARTY_NOTICES.md`.
+There are three ways to get models:
+
+- export your own with Lichee YOLO Studio (training → ONNX → tpu-mlir);
+- keep the models that already live in `/mnt/system/usr/bin/ai/models`;
+- fetch the SDK examples with `scripts/fetch-vendor.sh --download`.
+
+Models derived from Ultralytics YOLOv8/YOLO11 are AGPL-3.0: if you publish
+them, publish the corresponding sources too. Face and SDK example models have
+no explicit license. See `../../../models/README.md` and
+`../../../THIRD_PARTY_NOTICES.md`.
 
 Class names are not stored in `.cvimodel`. You can put a
 `<model_name>.names` file next to it (one name per line) — then boxes are

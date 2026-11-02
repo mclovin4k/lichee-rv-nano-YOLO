@@ -10,6 +10,18 @@ out/
 yolo_stream/dist/board/stream_yolo
 yolo_face/dist/board/face_stream
 yolo_studio/dist/
+yolo_studio/build/
+
+# Vendor libraries, models and headers are proprietary and are not
+# redistributed with this repository. scripts/fetch-vendor.sh fills this
+# directory from your board, your SDK or your own models.
+vendor/
+yolo_stream/dist/board/runtime/
+yolo_face/dist/board/runtime/
+yolo_stream/dist/board/models/*.cvimodel
+yolo_face/dist/board/models/**/*.cvimodel
+yolo_stream/third_party/cviruntime/
+yolo_face/third_party/cviruntime/
 
 # Local archives / kernel modules / logs
 *.tar.gz

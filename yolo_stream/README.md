@@ -14,9 +14,9 @@ implementation has been rewritten (see below).
 | Item | Location |
 |---|---|
 | Sources | `main.cpp`, `yolo8.c`, `vpss_det.c`, `venc_jpeg.c`, `draw_nv21.c`, `MJPEGWriter.*` |
-| Ready-to-run package | `yolo_stream-board.tar.gz` from Releases (binary, runtime, models, scripts) |
-| Runtime skeleton | `dist/board/runtime/` (vendor libraries and musl loader) |
-| Models | `dist/board/models/` |
+| Ready-to-run package | `yolo_stream-board.tar.gz` from Releases (binary, scripts; no vendor files, no models) |
+| Runtime skeleton | `dist/board/runtime/` — empty in git; `install.sh` fills it from the board firmware |
+| Models | `dist/board/models/` — empty in git; upload your own or use the ones on the board |
 | Start/stop scripts | `dist/board/start_stream.sh`, `dist/board/run_stream.sh` |
 | SSH installer | `install.sh` (downloads the latest release by default) |
 | Build | `CMakeLists.txt`, `cmake/`, `scripts/`, `patches/`, `../scripts/package-board.sh` |
@@ -133,17 +133,20 @@ For re-checking there is an offline mode without a camera:
 
 ## Models
 
-`dist/board/models/` contains 7 int8 models for cv181x: six stock YOLOv8n-det
-models (COCO-80, person/vehicle, helmet, traffic light, license plate,
-fire/smoke) and a quadcopter detector
-`yolov11n_det_drone_640_640` (YOLO11n, 1 class, md5
-`d479ed5849723b9137d71fd18cc3d4ba`). The drone model is a single common
-version, without a separate "v2". It is a derivative of Ultralytics YOLO11n
-(AGPL-3.0); terms and sources are in `../THIRD_PARTY_NOTICES.md`.
+No model is shipped in git or in the release package: exports derived from
+Ultralytics YOLOv8/YOLO11 are AGPL-3.0, and this repository is MIT. See
+[`../models/README.md`](../models/README.md) for the full picture.
 
-Any other YOLOv8/YOLO11-det model is picked up by the binary automatically:
-it reads the number of classes and the input size from the tensors (`auto`
-mode).
+The binary accepts any YOLOv8/YOLO11 detection export with the six-output raw
+head produced by `yolo_studio`, int8 or fp32; it reads the number of classes
+and the input size from the tensors (`auto` mode). Put the file into
+`dist/board/models/` (or upload it with `MODELS_DIR=... ./install.sh <IP>`);
+`start_stream.sh` also searches `/root/models` and
+`/mnt/system/usr/bin/ai/models`, so the stock models keep working without
+copying anything.
+
+Class names come from a `<model_name>.names` file next to the model (one name
+per line). `yolo_studio` writes and uploads it automatically.
 
 ## Building
 
@@ -186,15 +189,18 @@ checkout), without examples and binaries.
 
 The same build can be run on GitHub: **Actions** tab → **build** →
 **Run workflow**. The run produces `yolo_stream-bin` (the bare binary) and
-`yolo_stream-board` (a complete self-contained tarball) artifacts. Pushing a
+`yolo_stream-board` (binary + scripts, no vendor files) artifacts. Pushing a
 `v*` tag publishes both release assets automatically.
 
 To create the complete package locally after a build:
 
 ```sh
-../scripts/package-board.sh yolo_stream build/bin/stream_yolo \
-    .deps/riscv64-linux-musl-cross ../out
+../scripts/package-board.sh yolo_stream build/bin/stream_yolo ../out
 ```
+
+The archive contains the binary, the scripts and an empty `models/` directory.
+To embed the vendor files for a private, offline archive, add
+`--with-vendor ../vendor` (do not publish that archive).
 
 ## Installing on the board
 
@@ -219,10 +225,14 @@ TPU_PATCH=1 ./install.sh <IP>   # also apply the TPU timeout fix
 By default the installer downloads `yolo_stream-board.tar.gz` from the latest
 GitHub Release, verifies its SHA256, copies it to `/root/yolo_stream`, checks
 the package md5 list on the board, and does **not** add an autostart entry.
-The package already contains the binary, models, vendor libraries and a
-matching musl loader/libc, so no cross-compilation or manual library copying is
-needed on the board. Use `PAYLOAD_DIR` to install a locally built package
-instead.
+
+The archive contains only this project's binary and scripts. Right after the
+upload the installer runs a small script **on the board** that copies the
+vendor libraries from `/mnt/system/lib`, `/mnt/system/usr/lib` and
+`/mnt/system/usr/lib/3rd` into `/root/yolo_stream/runtime`. Models are uploaded
+from `MODELS_DIR` or `../vendor/models` when either is set; otherwise the
+models already on the board are used. Use `PAYLOAD_DIR` to install a locally
+built package instead.
 
 The installer preserves already uploaded models, and `/root/faces` is used
 only by `yolo_face`. The board address is not fixed: it differs between
@@ -244,6 +254,19 @@ tar -C /tmp/yolo_stream-package -cf - . | \
 ssh root@<IP> 'chmod +x /root/yolo_stream/stream_yolo /root/yolo_stream/*.sh'
 ```
 
+Then copy the vendor libraries from the firmware once (this is what
+`install.sh` automates):
+
+```sh
+ssh root@<IP> 'mkdir -p /root/yolo_stream/runtime && cd /root/yolo_stream/runtime &&
+  for n in libcviruntime.so libcvikernel.so libvenc.so libsys.so libisp.so libisp_algo.so \
+           libae.so libawb.so libsns_gc4653.so libcvi_bin.so libcvi_bin_isp.so; do
+    for d in /mnt/system/lib /mnt/system/usr/lib /mnt/system/usr/lib/3rd; do
+      [ -f "$d/$n" ] && cp -L "$d/$n" . && break
+    done
+  done'
+```
+
 ## Running
 
 ```sh
@@ -256,7 +279,8 @@ ssh root@<IP> '/root/yolo_stream/start_stream.sh stop'
 - Stream: `http://<IP>:7777/` (MJPEG, VLC/ffplay)
 - Log: `/root/yolo_stream/log/stream.log` (the previous one is moved to `.1`
   at startup)
-- Models: `dist/board/models/` next to the script, then `/root/models`
+- Models: `models/` next to the script, then `/root/models`, then
+  `/mnt/system/usr/bin/ai/models`
 - Last model file: `/root/yolo_stream/log/last_model`
 
 `stream_yolo` and `face_stream` from the neighboring `yolo_face` project use
@@ -267,22 +291,22 @@ boot.
 
 ### Loader and libraries
 
-The release package is self-contained: `run_stream.sh` sets
-`LD_LIBRARY_PATH` to `runtime/` and starts the binary through
-`runtime/ld-musl-riscv64.so.1` by default. The bundled loader and libc come
-from the same toolchain as the binary, so no system musl version is required.
+The binary is a musl executable and runs on the loader and libc of the
+firmware. `run_stream.sh` puts, in this order, the copies in `runtime/`, then
+the firmware directories, into `LD_LIBRARY_PATH`:
 
-```sh
-# default: bundled loader + bundled libraries
-/root/yolo_stream/start_stream.sh auto
-
-# opt out and use the system /lib/ld-musl-riscv64.so.1
-SY_BUNDLED_LOADER=0 /root/yolo_stream/start_stream.sh auto
+```
+runtime/  /mnt/system/usr/lib  /mnt/system/usr/lib/3rd  /mnt/system/lib  /usr/lib
 ```
 
-When the binary is started explicitly through the loader, the process `comm`
-becomes `ld-musl-riscv64`, so the script stores the pid in
-`/tmp/yolo_stream.app.pid` instead of looking the process up via `pidof`.
+A bundled loader is used only if you place one in `runtime/` and opt in:
+
+```sh
+SY_BUNDLED_LOADER=1 /root/yolo_stream/start_stream.sh auto
+```
+
+The script stores the pid in `/tmp/yolo_stream.app.pid`, so it works with both
+the system loader and an explicit one.
 
 ## Environment variables (no rebuild required)
 
