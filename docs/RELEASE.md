@@ -29,7 +29,9 @@ libraries from the board firmware and uploads models from `MODELS_DIR`; see
 2. `studio-linux` — builds the slim one-file executable and the full
    one-folder bundle (`--mode onedir --with-ml`) on Ubuntu 22.04. Torch comes
    from `download.pytorch.org/whl/cpu`, otherwise pip would pull gigabytes of
-   CUDA. Smoke tests: `--smoke-test` for both, `--have-ml` for the full one.
+   CUDA. Smoke tests: `--smoke-test` for both, `--have-ml` for the full one;
+   the full build must also export a real `yolo11n.pt` and produce the six
+   board outputs, otherwise the release fails.
 3. `studio-windows` — the same on `windows-latest`; PyPI torch is already
    CPU-only there. The `.exe` is smoke-tested offscreen and the full bundle is
    checked with `--have-ml`.
@@ -82,7 +84,7 @@ LicheeYOLOStudio-full/LicheeYOLOStudio-full --have-ml           # prints ok
 ## Removing a release
 
 ```sh
-gh release delete v1.0.0 --yes --cleanup-tag
+gh release delete v1.0.2 --yes --cleanup-tag
 ```
 
 GitHub may keep unreferenced blobs reachable by SHA for a while; that is

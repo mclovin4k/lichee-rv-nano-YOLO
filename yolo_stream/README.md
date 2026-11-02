@@ -329,7 +329,7 @@ the system loader and an explicit one.
 | `SY_MAX_BOXES` | 16 | do not publish a result with more than N boxes (corrupt frame); `0` — disable |
 | `SY_DUMP_NV21` | off | write the first raw NV21 frame to a file (debug) |
 | `SY_TEST_NV21` | off | run the detector offline on an NV21 file and exit (debug) |
-| `SY_BUNDLED_LOADER` | 1 | `0` — use the system musl loader instead of `runtime/` |
+| `SY_BUNDLED_LOADER` | 0 | `1` — load the app with `runtime/ld-musl-riscv64.so.1` |
 
 Command-line arguments: `stream_yolo <path to .cvimodel> <classes|auto> <W> [H]`
 (`auto` — the binary reads the number of classes from the model tensors;

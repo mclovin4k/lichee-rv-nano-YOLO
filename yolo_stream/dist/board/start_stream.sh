@@ -9,7 +9,7 @@
 # Optional environment:
 #   SY_MODEL=<substring>   model for "auto" (default coco80)
 #   SY_HP="W H"            capture size (default "960 540")
-#   SY_BUNDLED_LOADER=0    use the system musl loader instead of runtime/
+#   SY_BUNDLED_LOADER=1    use runtime/ld-musl-riscv64.so.1 (default: system)
 #   SY_KEEP_LOG=1          do not rotate the log on start
 #   plus the detection variables understood by stream_yolo (SY_DET_THR, ...)
 #

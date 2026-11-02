@@ -16,7 +16,7 @@
 #   SY_LIVE=1             enable the liveness model (off by default)
 #   SY_ROTATE=90          rotate the frame for the detector
 #   FACES_DIR=/root/faces gallery: <name>/feature.bin
-#   SY_BUNDLED_LOADER=0   use the system musl loader instead of runtime/
+#   SY_BUNDLED_LOADER=1   use runtime/ld-musl-riscv64.so.1 (default: system)
 #   SY_KEEP_LOG=1         do not rotate the log on start
 set -eu
 
@@ -156,7 +156,6 @@ start_app() {
     export SY_FACES_DIR="$FACES_DIR"
     export SY_LIVE=${SY_LIVE:-0}
     export SY_ROTATE=${SY_ROTATE:-0}
-    export SY_BUNDLED_LOADER=${SY_BUNDLED_LOADER:-1}
     export FACE_APP_PIDFILE="$APP_PID"
 
     rm -f "$SUP_PID" "$APP_PID"

@@ -259,7 +259,7 @@ to the official `nihui/opencv-mobile` v36 release.
 | `SY_FACES_DIR` | `/root/faces` | gallery directory |
 | `SY_TDL_LIB` | `runtime/libcvi_tdl.so` | TDL library |
 | `SY_VPU_LIB` | `runtime/libvpu_tdl.so` | libvpu for TDL |
-| `SY_BUNDLED_LOADER` | 1 | 0 — use the system musl loader instead of `runtime/` |
+| `SY_BUNDLED_LOADER` | 0 | 1 — load the app with `runtime/ld-musl-riscv64.so.1` |
 | `WIDTH`, `HEIGHT` | 960, 540 | frame size |
 
 ## Limitations
