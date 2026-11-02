@@ -76,8 +76,18 @@ X11 backend does not.
 
 **Windows x86_64**
 
-Download and run `LicheeYOLOStudio.exe`. There is no installer. If Windows
-SmartScreen appears, choose **More info → Run anyway**.
+```powershell
+curl.exe -fLO https://github.com/mclovin4k/lichee-rv-nano-YOLO/releases/latest/download/yolo_studio-windows-x86_64.tar.gz
+curl.exe -fLO https://github.com/mclovin4k/lichee-rv-nano-YOLO/releases/latest/download/yolo_studio-windows-x86_64.tar.gz.sha256
+# verify with: Get-FileHash yolo_studio-windows-x86_64.tar.gz -Algorithm SHA256
+tar -xzf yolo_studio-windows-x86_64.tar.gz
+.\LicheeYOLOStudio.exe
+```
+
+There is no installer; the slim archive is a single `.exe` plus the license
+files. The `-full` archive is a folder — unpack it and run
+`LicheeYOLOStudio-full\LicheeYOLOStudio-full.exe`. If SmartScreen appears,
+choose **More info → Run anyway**.
 
 ## Requirements
 
@@ -88,7 +98,8 @@ SmartScreen appears, choose **More info → Run anyway**.
   labeling and upload);
 - for running from source: Python 3.10+ (tested on 3.13) and the packages from
   `requirements.txt` (PySide6, OpenCV, numpy, paramiko, PyYAML);
-- for training: a separate environment with `ultralytics` + `torch` (CPU);
+- for training: the `-full` build, or a separate environment with
+  `ultralytics` + `torch` (CPU);
 - for conversion: a `tpu-mlir` environment (Python 3.10) — the
   `tools/build_cvimodel.sh` script and the `TPU_PY` variable.
 
