@@ -3,8 +3,8 @@
 A ready-to-run application for the LicheeRV Nano with the GC4653 camera:
 960×540 MJPEG on port 7777, SCRFD face detection, gallery-based recognition
 (cviface) and passive blink-based liveness checking. The release package
-includes the binary, runtime libraries, matching musl loader/libc and start
-scripts, so no cross-compilation is needed to run it.
+contains the binary and start scripts; vendor libraries are copied from the
+board firmware at install time and no cross-compilation is needed to run it.
 
 ## Contents
 
@@ -46,7 +46,7 @@ From a checkout of the repository:
 chmod +x install.sh
 ./install.sh                 # downloads the latest release, asks for the IP
 BOARD_IP=<IP> ./install.sh
-RELEASE=v1.0.0 ./install.sh <IP>
+RELEASE=v1.0.1 ./install.sh <IP>
 PAYLOAD_DIR=/path/to/package ./install.sh <IP>
 TPU_PATCH=1 ./install.sh <IP>   # also apply the TPU timeout fix
 ```

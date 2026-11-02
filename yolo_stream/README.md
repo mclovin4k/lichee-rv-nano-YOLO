@@ -217,7 +217,7 @@ From a checkout of the repository:
 chmod +x install.sh
 ./install.sh                 # downloads the latest release, asks for the IP
 BOARD_IP=<IP> ./install.sh
-RELEASE=v1.0.0 ./install.sh <IP>
+RELEASE=v1.0.1 ./install.sh <IP>
 PAYLOAD_DIR=/path/to/package ./install.sh <IP>
 TPU_PATCH=1 ./install.sh <IP>   # also apply the TPU timeout fix
 ```
