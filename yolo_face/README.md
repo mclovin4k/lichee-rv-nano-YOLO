@@ -1,5 +1,9 @@
 # face_stream — MJPEG + NPU face recognition (LicheeRV Nano, SG2002/CV181x)
 
+<img width="1919" height="823" alt="image" src="https://github.com/user-attachments/assets/fb50ce8b-873b-45b7-92f6-5292f71f87e1" />
+
+Web UI in browser 
+
 A ready-to-run application for the LicheeRV Nano with the GC4653 camera:
 960×540 MJPEG on port 7777, SCRFD face detection, gallery-based recognition
 (cviface) and passive blink-based liveness checking. The release package
