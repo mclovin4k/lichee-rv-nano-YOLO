@@ -395,6 +395,9 @@ class ModelPage(QWidget):
         user what to install). Detection results are saved back to settings."""
         info = pyenv.KINDS[kind]
         key = info["config_key"]
+        if pyenv.bundled(kind):
+            # The full build carries ultralytics itself: nothing to configure.
+            return str(pyenv.resolve(kind))
         configured = str(self.cfg.get(key) or "")
         exe = pyenv.resolve(kind, configured)
         if exe is None:
@@ -416,11 +419,26 @@ class ModelPage(QWidget):
         box.setInformativeText(pyenv.missing_help(kind))
         locate = box.addButton("Locate interpreter…",
                                QMessageBox.ButtonRole.ActionRole)
+        create = box.addButton("Create environment…",
+                               QMessageBox.ButtonRole.ActionRole)
         search = box.addButton("Search again",
                                QMessageBox.ButtonRole.ActionRole)
         box.addButton(QMessageBox.StandardButton.Cancel)
         box.exec()
         clicked = box.clickedButton()
+        if clicked is create:
+            target = pyenv.venv_target(kind)
+            if QMessageBox.question(
+                    self, "Create environment",
+                    f"Create {target} and install {info['install']} into it?\n\n"
+                    "About 400 MB will be downloaded once; PyTorch is large "
+                    "and the installation can take several minutes.") \
+                    != QMessageBox.StandardButton.Yes:
+                return
+            self.log.append_line(f"creating {target}…")
+            self._run(pyenv.create_env, kind,
+                      on_done=lambda path: self._env_created(kind, path))
+            return
         if clicked is locate:
             path, _ = QFileDialog.getOpenFileName(
                 self, info["label"], str(Path.home()))
@@ -438,6 +456,14 @@ class ModelPage(QWidget):
             self.cfg[info["config_key"]] = str(exe)
             self.cfg.save()
             self.log.append_line(f"{info['label']}: {exe}")
+
+    def _env_created(self, kind: str, path) -> None:
+        info = pyenv.KINDS[kind]
+        if path is None:
+            return
+        self.cfg[info["config_key"]] = str(path)
+        self.cfg.save()
+        self.log.append_line(f"{info['label']}: {path}")
 
     # ---------- background ----------
 

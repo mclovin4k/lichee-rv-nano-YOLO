@@ -17,7 +17,18 @@ a custom YOLO model for the **LicheeRV Nano (cv181x)**:
 
 The easiest option is a release build from
 [GitHub Releases](https://github.com/mclovin4k/lichee-rv-nano-YOLO/releases/latest);
-Python and Qt do not need to be installed.
+Python and Qt do not need to be installed. Each platform has two variants:
+
+| Asset | Size | Training / ONNX export |
+|---|---|---|
+| `yolo_studio-<os>-x86_64.tar.gz` | ~150 MB | needs a separate Python with `ultralytics` |
+| `yolo_studio-<os>-x86_64-full.tar.gz` | ~600–900 MB | works out of the box — torch and ultralytics are inside |
+
+The full variant is a folder, not a single file: unpack it and run
+`LicheeYOLOStudio-full/LicheeYOLOStudio-full.exe` (Windows) or
+`LicheeYOLOStudio-full/LicheeYOLOStudio-full` (Linux). It starts without
+extracting anything, so startup is as fast as the slim build. The single-file
+executable stays small because it does not carry PyTorch.
 
 **Linux x86_64**
 
@@ -72,7 +83,9 @@ SmartScreen appears, choose **More info → Run anyway**.
 
 **Host (Linux or Windows):**
 
-- for a release build: no Python installation;
+- for a release build: no Python installation (the `-full` variant also
+  includes ultralytics and torch; the slim one needs nothing for capture,
+  labeling and upload);
 - for running from source: Python 3.10+ (tested on 3.13) and the packages from
   `requirements.txt` (PySide6, OpenCV, numpy, paramiko, PyYAML);
 - for training: a separate environment with `ultralytics` + `torch` (CPU);
@@ -267,28 +280,52 @@ the Model page). Calibration uses frames from `calib/` (up to 200).
 
 PyInstaller cannot cross-compile: build the Linux executable on Linux and the
 Windows `.exe` on Windows. Install the runtime dependencies and PyInstaller,
-then run the build script:
+then choose what to build:
 
 ```sh
 cd yolo_studio
 python -m pip install -r requirements.txt pyinstaller
-python tools/build_desktop.py
+
+python tools/build_desktop.py --mode onefile          # dist/LicheeYOLOStudio[.exe]
+python tools/build_desktop.py --mode onedir           # dist/LicheeYOLOStudio/
+python tools/build_desktop.py --mode both             # both slim variants
+python tools/build_desktop.py --mode onedir --with-ml # dist/LicheeYOLOStudio-full/
 ```
 
-The result is `dist/LicheeYOLOStudio` (Linux) or
-`dist/LicheeYOLOStudio.exe` (Windows). On Linux, install the xcb development/
-runtime packages listed above first; the script copies those libraries into
-the one-file bundle. The build script also adds `yaml` and `paramiko` as
-hidden imports and excludes unused Qt bindings.
+`--with-ml` embeds `ultralytics` and `torch`, which must be importable in the
+build environment:
 
-GitHub Actions builds both executables on every push and attaches them to a
+```sh
+# Linux: CPU-only torch, otherwise pip pulls several gigabytes of CUDA
+python -m pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+python -m pip install ultralytics
+# Windows
+python -m pip install ultralytics
+```
+
+The full bundle is a folder because a 1 GB one-file executable would unpack
+itself into a temporary directory on every start. The frozen application runs
+training and the ONNX export through its own hidden modes
+(`--yolo-cli`, `--export-onnx`), so no external Python is involved.
+Conversion to cvimodel still needs Linux/WSL: `tpu-mlir` does not exist for
+Windows.
+
+On Linux, install the xcb development/runtime packages listed above first; the
+script copies those libraries into the bundle. The build script also adds
+`yaml` and `paramiko` as hidden imports, excludes unused Qt bindings and puts
+the LGPL notice next to the binaries.
+
+GitHub Actions builds both variants on every push and attaches them to a
 release for `v*` tags. The workflow runs an offscreen `--smoke-test` on both
-platforms before uploading.
+platforms, and for the full build also `--have-ml`, which fails unless torch
+and ultralytics can really be imported from the frozen bundle.
 
 ## Troubleshooting
 
-**“Python not found … Set the path in Settings”** — training and ONNX export
-run in a separate environment with `ultralytics`; PyTorch is not bundled. Clear
+**“Python not found … Set the path in Settings”** — the slim build runs
+training and ONNX export in a separate environment with `ultralytics`; PyTorch
+is not bundled there (use the `-full` variant if you do not want to install
+anything). Clear
 **Settings → Python Ultralytics** and press **Detect**, or create the
 environment as shown in *Running from source* and point the field at
 `…/bin/python` (`…\Scripts\python.exe` on Windows). The error dialog also

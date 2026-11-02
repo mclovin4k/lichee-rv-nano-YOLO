@@ -121,7 +121,59 @@ def _check_linux_qt() -> None:
     )
 
 
+def _run_helper(argv: list[str]) -> int | None:
+    """Hidden modes used by the pipeline of a build that bundles ultralytics.
+
+    A frozen application has no separate interpreter to spawn, so training and
+    the ONNX export re-enter this executable:
+
+        LicheeYOLOStudio --yolo-cli detect train data=... model=...
+        LicheeYOLOStudio --export-onnx best.pt 640
+    """
+    if argv[:1] == ["--yolo-cli"]:
+        sys.argv = ["yolo"] + argv[1:]
+        try:
+            from ultralytics.cfg import entrypoint
+        except ImportError as exc:
+            print(f"error: ultralytics is not bundled in this build: {exc}",
+                  file=sys.stderr)
+            return 2
+        entrypoint()
+        return 0
+    if argv[:1] == ["--have-ml"]:
+        # Diagnostic used by CI to check that the full build really contains
+        # torch/ultralytics (importing them is the only reliable test).
+        try:
+            import ultralytics  # noqa: F401
+        except Exception as exc:  # noqa: BLE001 - any failure means "no"
+            print(f"no: {exc}", file=sys.stderr)
+            return 1
+        print("ok")
+        return 0
+    if argv[:1] == ["--export-onnx"]:
+        try:
+            from studio.export_yolo11 import main as export_main
+        except ImportError as exc:
+            print(f"error: ultralytics is not bundled in this build: {exc}",
+                  file=sys.stderr)
+            return 2
+        return export_main(argv[1:])
+    return None
+
+
+def _ensure_stdio() -> None:
+    """A windowed PyInstaller build has no stdout/stderr (both are None)."""
+    for name in ("stdout", "stderr"):
+        if getattr(sys, name) is None:
+            setattr(sys, name, open(os.devnull, "w", encoding="utf-8"))
+
+
 def main() -> int:
+    _ensure_stdio()
+    helper = _run_helper(sys.argv[1:])
+    if helper is not None:
+        return helper
+
     _check_linux_qt()
     smoke_test = "--smoke-test" in sys.argv
     if smoke_test:

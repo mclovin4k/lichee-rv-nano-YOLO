@@ -64,16 +64,16 @@ def train_local(data_yaml: str | Path, work_dir: str | Path, ultra_python: str,
                 cancel: threading.Event | None = None) -> Path:
     work = Path(work_dir)
     work.mkdir(parents=True, exist_ok=True)
-    # The CLI sits next to the interpreter: Scripts/yolo.exe on Windows,
-    # bin/yolo elsewhere.
-    yolo_bin = pyenv.sibling(ultra_python, "yolo")
-    if yolo_bin is None:
+    # Either the bundled CLI (full build) or yolo/yolo.exe next to the
+    # interpreter.
+    argv = pyenv.yolo_argv(ultra_python)
+    if argv is None:
         raise PipelineError(
             f"the 'yolo' command was not found next to {ultra_python}; "
             "install the tools into that environment:\n"
             f"  {ultra_python} -m pip install ultralytics")
-    cmd = [
-        str(yolo_bin), "detect", "train",
+    cmd = argv + [
+        "detect", "train",
         f"data={Path(data_yaml)}",
         f"model={base_model}",
         f"epochs={int(epochs)}",
@@ -100,9 +100,12 @@ def export_onnx(pt: str | Path, ultra_python: str, imgsz: int = 640,
     if not pt.is_file():
         raise PipelineError(f"weights not found: {pt}")
     script = TOOLS / "export_yolo11.py"
-    if not script.is_file():
-        raise PipelineError(f"script not found: {script}")
-    run_stream([ultra_python, str(script), str(pt), str(int(imgsz))],
+    argv = pyenv.export_argv(ultra_python, script)
+    if argv is None:
+        raise PipelineError(
+            f"Cannot run the ONNX export with {ultra_python}; install "
+            "ultralytics into that environment.")
+    run_stream(argv + [str(pt), str(int(imgsz))],
                cwd=pt.parent, on_line=on_line, cancel=cancel)
     onnx = pt.with_suffix(".onnx")
     if not onnx.is_file():

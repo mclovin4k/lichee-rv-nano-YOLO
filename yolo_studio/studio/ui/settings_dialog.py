@@ -56,7 +56,11 @@ class SettingsDialog(QDialog):
                   file_mode: bool, detect_kind: str = "") -> QLineEdit:
         row = QHBoxLayout()
         edit = QLineEdit(str(self.cfg.get(key)))
-        if detect_kind:
+        if detect_kind and pyenv.bundled(detect_kind):
+            edit.setPlaceholderText("bundled in this build")
+            edit.setToolTip("This build already contains the package; the "
+                            "field can stay empty.")
+        elif detect_kind:
             edit.setPlaceholderText("detected automatically")
         row.addWidget(edit, 1)
         btn = QPushButton("…")

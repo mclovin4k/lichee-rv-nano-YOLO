@@ -1,12 +1,18 @@
 #!/usr/bin/env python3
-"""Build a standalone Lichee YOLO Studio executable with PyInstaller.
+"""Build standalone Lichee YOLO Studio executables with PyInstaller.
 
 The build must run on the target operating system (PyInstaller cannot cross
-compile): Linux on Linux, Windows on Windows. The result is written to
-``dist/LicheeYOLOStudio`` (or ``dist/LicheeYOLOStudio.exe``).
+compile): Linux on Linux, Windows on Windows. Output goes to ``dist/``:
 
-    python -m pip install -r requirements.txt pyinstaller
-    python tools/build_desktop.py
+    --mode onefile           dist/LicheeYOLOStudio[.exe]        (slim)
+    --mode onedir            dist/LicheeYOLOStudio/             (slim)
+    --mode both              both of the above
+    --mode onedir --with-ml  dist/LicheeYOLOStudio-full/        (torch inside)
+
+The slim build needs a separate Python environment for training and ONNX
+export (see README). The ``--with-ml`` build bundles ultralytics + torch, so
+training works with no Python installed at all; the archive is large
+(~1 GB installed) but starts instantly because it is a directory.
 
 Linux: the script bundles the xcb libraries Qt needs (including
 libxcb-cursor.so.0). Install the matching development/runtime packages before
@@ -19,15 +25,18 @@ building; on Debian/Ubuntu:
 
 from __future__ import annotations
 
+import argparse
+import shutil
 import subprocess
 import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+REPO = ROOT.parent
 NAME = "LicheeYOLOStudio"
 
 # Libraries dlopen()ed by the Qt xcb platform plugin. They are not always
-# installed on minimal desktops, so put them inside the one-file bundle.
+# installed on minimal desktops, so put them inside the bundle.
 LINUX_XCB_LIBS = (
     "libxcb-cursor.so.0",
     "libxcb-icccm.so.4",
@@ -53,6 +62,8 @@ _LIB_DIRS = (
     Path("/lib"),
 )
 
+NOTICES = ("LGPL-3.0.txt",)
+
 
 def find_library(soname: str) -> Path | None:
     for directory in _LIB_DIRS:
@@ -73,32 +84,64 @@ def find_library(soname: str) -> Path | None:
     return None
 
 
-def main() -> int:
-    try:
-        import PyInstaller  # noqa: F401
-    except ImportError:
-        print("PyInstaller is not installed. Run:\n"
-              "  python -m pip install -r requirements.txt pyinstaller",
-              file=sys.stderr)
-        return 1
-
+def pyinstaller_cmd(name: str, mode: str, work: Path) -> list[str]:
     cmd = [
         sys.executable, "-m", "PyInstaller",
-        "--noconfirm", "--clean", "--onefile", "--windowed",
-        "--name", NAME,
+        "--noconfirm", "--clean", "--windowed",
+        "--name", name,
         "--distpath", str(ROOT / "dist"),
-        "--workpath", str(ROOT / "build" / "pyinstaller"),
+        "--workpath", str(work),
         "--specpath", str(ROOT / "build"),
         "--paths", str(ROOT),
         "--hidden-import", "yaml",
         "--hidden-import", "paramiko",
         "--exclude-module", "tkinter",
-        "--exclude-module", "matplotlib",
         "--exclude-module", "PyQt5",
         "--exclude-module", "PyQt6",
-        str(ROOT / "app.py"),
+    ]
+    cmd.append("--onefile" if mode == "onefile" else "--onedir")
+    return cmd
+
+
+def ml_args() -> list[str]:
+    """PyInstaller flags for a build that embeds ultralytics and torch."""
+    return [
+        "--collect-all", "ultralytics",
+        "--collect-submodules", "torch",
+        "--collect-submodules", "torchvision",
+        "--hidden-import", "torch",
+        "--hidden-import", "torchvision",
+        "--hidden-import", "onnx",
+        "--hidden-import", "onnxruntime",
     ]
 
+
+def copy_notices(target: Path) -> None:
+    """LGPL/Qt notices next to the binary (PySide6 is LGPL-3.0)."""
+    target.mkdir(parents=True, exist_ok=True)
+    for name in NOTICES:
+        src = REPO / "LICENSES" / name
+        if src.is_file():
+            shutil.copy2(src, target / name)
+    notices = REPO / "THIRD_PARTY_NOTICES.md"
+    if notices.is_file():
+        shutil.copy2(notices, target / notices.name)
+
+
+def build(mode: str, with_ml: bool) -> None:
+    name = NAME + ("-full" if with_ml else "")
+    tag = "full" if with_ml else "slim"
+    print(f"\n=== {name} ({mode}, {tag}) ===")
+
+    cmd = pyinstaller_cmd(name, mode, ROOT / "build" / f"pyinstaller-{name}-{mode}")
+    if with_ml:
+        try:
+            import ultralytics  # noqa: F401
+        except ImportError:
+            raise SystemExit(
+                "--with-ml needs ultralytics in the build environment:\n"
+                "  python -m pip install ultralytics")
+        cmd += ml_args()
     if sys.platform.startswith("linux"):
         missing = []
         for soname in LINUX_XCB_LIBS:
@@ -112,15 +155,48 @@ def main() -> int:
                   "bundled:\n  " + "\n  ".join(missing), file=sys.stderr)
             print("Install them before building the release (see the module "
                   "docstring for the Debian/Ubuntu package list).", file=sys.stderr)
+    cmd.append(str(ROOT / "app.py"))
 
     print("$", " ".join(cmd))
     subprocess.check_call(cmd, cwd=ROOT)
 
-    exe = ROOT / "dist" / (NAME + (".exe" if sys.platform == "win32" else ""))
-    if not exe.exists():
-        print(f"error: {exe} was not produced", file=sys.stderr)
+    dist = ROOT / "dist"
+    if mode == "onefile":
+        exe = dist / (name + (".exe" if sys.platform == "win32" else ""))
+        if not exe.exists():
+            raise SystemExit(f"error: {exe} was not produced")
+        print(f"Done: {exe} ({exe.stat().st_size / (1024 * 1024):.1f} MiB)")
+    else:
+        folder = dist / name
+        if not folder.is_dir():
+            raise SystemExit(f"error: {folder} was not produced")
+        copy_notices(folder)
+        size = sum(p.stat().st_size for p in folder.rglob("*") if p.is_file())
+        print(f"Done: {folder}/ ({size / (1024 * 1024):.1f} MiB)")
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--mode", choices=("onefile", "onedir", "both"),
+                        default="onefile",
+                        help="onefile: a single executable; onedir: a folder "
+                             "that starts faster (default: onefile)")
+    parser.add_argument("--with-ml", action="store_true",
+                        help="bundle ultralytics and torch (large, training "
+                             "works without a separate Python)")
+    args = parser.parse_args(argv)
+
+    try:
+        import PyInstaller  # noqa: F401
+    except ImportError:
+        print("PyInstaller is not installed. Run:\n"
+              "  python -m pip install -r requirements.txt pyinstaller",
+              file=sys.stderr)
         return 1
-    print(f"\nDone: {exe} ({exe.stat().st_size / (1024 * 1024):.1f} MiB)")
+
+    modes = ("onefile", "onedir") if args.mode == "both" else (args.mode,)
+    for mode in modes:
+        build(mode, args.with_ml)
     return 0
 
 
