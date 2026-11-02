@@ -8,7 +8,7 @@ start/run scripts, an empty `models/` directory and `md5sums.txt`. It does not
 contain vendor libraries or models — the Cvitek/Sophgo runtime is proprietary
 and the models are either AGPL-3.0 derivatives of Ultralytics or SDK files
 without a license. `install.sh` copies the libraries from the board firmware
-and uploads the models you provide. See `../../../THIRD_PARTY_NOTICES.md`.
+and uploads the models you provide. See `../../THIRD_PARTY_NOTICES.md`.
 
 | Item | Location |
 |---|---|

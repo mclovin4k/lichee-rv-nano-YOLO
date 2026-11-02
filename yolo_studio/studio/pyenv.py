@@ -1,10 +1,10 @@
-"""Locating the external Python interpreters the pipeline needs.
+"""Locating the Python interpreters the pipeline needs.
 
 Lichee YOLO Studio is a GUI around three command line tools:
 
-* training and ONNX export run in a Python environment with ``ultralytics``
-  (PyTorch is far too large to bundle, and it must be a real, separate
-  interpreter);
+* training and ONNX export run in a Python environment with ``ultralytics``:
+  either the interpreter of the ``-full`` build (which embeds the whole ML
+  stack) or an external environment chosen by the user;
 * cvimodel conversion runs in a Linux environment with ``tpu-mlir``.
 
 Nothing is hard coded: the interpreter is taken from the settings, from an
@@ -368,7 +368,7 @@ def missing_help(kind: str) -> str:
     if WIN:
         return (
             "Training and ONNX export need a separate Python environment with "
-            "the \"ultralytics\" package (PyTorch is not bundled).\n\n"
+            "the \"ultralytics\" package (this build does not contain it).\n\n"
             "Open PowerShell:\n"
             "  py -3 -m venv %USERPROFILE%\\.venvs\\ultra\n"
             "  %USERPROFILE%\\.venvs\\ultra\\Scripts\\python -m pip install ultralytics\n\n"
@@ -378,7 +378,7 @@ def missing_help(kind: str) -> str:
         )
     return (
         "Training and ONNX export need a separate Python environment with the "
-        "\"ultralytics\" package (PyTorch is not bundled).\n\n"
+        "\"ultralytics\" package (this build does not contain it).\n\n"
         "  python3 -m venv ~/.venvs/ultra\n"
         "  ~/.venvs/ultra/bin/python -m pip install ultralytics\n\n"
         "Then set Settings → \"Python Ultralytics\" to\n"

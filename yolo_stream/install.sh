@@ -88,6 +88,19 @@ build_payload() {
     PAYLOAD_DIR="$TMP/payload"
 }
 
+stage_models() { # stage_models <src> <board-dir>
+    ensure_tmp
+    rm -rf "$TMP/models"
+    mkdir -p "$TMP/models"
+    find "$1" -type f \( -name '*.cvimodel' -o -name '*.names' \) \
+        -exec cp -f {} "$TMP/models/" \;
+    if [ -z "$(ls -A "$TMP/models" 2>/dev/null)" ]; then
+        warn "no .cvimodel or .names files under $1"
+        return 1
+    fi
+    tar -C "$TMP/models" -cf - . | $RSSH "mkdir -p $2 && tar -xf - -C $2"
+}
+
 prepare_payload() {
     if [ "$BUILD" = "1" ]; then
         build_payload
@@ -194,8 +207,7 @@ fi
 
 if [ -n "$MODEL_SRC" ]; then
     say "uploading models from $MODEL_SRC"
-    $RSSH "mkdir -p $DEST/models"
-    tar -C "$MODEL_SRC" -cf - . | $RSSH "tar -xf - -C $DEST/models"
+    stage_models "$MODEL_SRC" "$DEST/models" || true
     $RSSH "ls -1 $DEST/models | head -20"
 else
     say "models"

@@ -16,7 +16,7 @@ libraries from the board firmware and upload only the models you provide. See
 
 | Project | What it is | Quick start |
 |---|---|---|
-| [`yolo_stream/`](yolo_stream/README.md) | MJPEG 960×540 + YOLOv8/YOLO11 on the NPU, 7 models, port 7777 | `yolo_stream/install.sh <IP>` → `start_stream.sh auto` |
+| [`yolo_stream/`](yolo_stream/README.md) | MJPEG 960×540 + YOLOv8/YOLO11 on the NPU, port 7777 | `yolo_stream/install.sh <IP>` → `start_stream.sh auto` |
 | [`yolo_face/`](yolo_face/README.md) | MJPEG + face detection/recognition (SCRFD + cviface) | `yolo_face/install.sh <IP>` → `start_face.sh start` |
 | [`yolo_studio/`](yolo_studio/README.md) | Desktop tool: dataset import/capture, labeling, training, `.cvimodel` export | download the Linux/Windows build from Releases |
 | [`tpu-fix/`](tpu-fix/README.md) | TPU timeout patcher (`soph_tpu.ko`) without redistributing the `.ko` | `tpu-fix/patch_tpu.sh` on the board |
@@ -68,8 +68,9 @@ TPU_PATCH=1 ./install.sh <IP>                      # also apply the TPU timeout 
 The installer stops an old stream/face process, copies the package to
 `/root/yolo_stream` or `/root/yolo_face`, verifies the checksums, copies the
 vendor libraries from `/mnt/system/lib`, `/mnt/system/usr/lib` and
-`/mnt/system/usr/lib/3rd` into `$DEST/runtime`, uploads models from
-`MODELS_DIR` (or `vendor/models`), and leaves the camera configuration alone.
+`/mnt/system/usr/lib/3rd` into `$DEST/runtime`, uploads every `.cvimodel` and
+`.names` file found under `MODELS_DIR` (or `vendor/models`), and leaves the
+camera configuration alone.
 
 ### Lichee YOLO Studio
 

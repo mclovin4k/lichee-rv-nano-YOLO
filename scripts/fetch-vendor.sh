@@ -100,10 +100,10 @@ copy_lib() { # copy_lib <file>
     printf '  lib/%s\n' "$name"
 }
 
-copy_models() { # copy_models <dir>
+copy_models() { # copy_models <dir>: flatten every model below <dir>
     [ -d "$1" ] || return 0
-    for f in "$1"/*.cvimodel "$1"/*.names; do
-        [ -f "$f" ] || continue
+    find "$1" -type f \( -name '*.cvimodel' -o -name '*.names' \) | \
+    while IFS= read -r f; do
         name=$(basename "$f")
         [ -e "$DEST/models/$name" ] && continue
         cp -L "$f" "$DEST/models/$name"
@@ -151,9 +151,8 @@ done
 for d in /mnt/system/usr/bin/ai/models /root/models \
          /root/yolo_stream/models /root/yolo_face/models; do
     [ -d "\$d" ] || continue
-    for f in "\$d"/*.cvimodel "\$d"/*.names; do
-        if [ -f "\$f" ]; then cp -f "\$f" "\$T/models/" 2>/dev/null || true; fi
-    done
+    find "\$d" -type f -name '*.cvimodel' -exec cp -f {} "\$T/models/" \; 2>/dev/null || true
+    find "\$d" -type f -name '*.names' -exec cp -f {} "\$T/models/" \; 2>/dev/null || true
 done
 cd "\$T"
 tar -cf - lib models

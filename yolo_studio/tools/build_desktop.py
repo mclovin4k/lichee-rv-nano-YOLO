@@ -26,6 +26,7 @@ building; on Debian/Ubuntu:
 from __future__ import annotations
 
 import argparse
+import os
 import shutil
 import subprocess
 import sys
@@ -95,12 +96,37 @@ def pyinstaller_cmd(name: str, mode: str, work: Path) -> list[str]:
         "--paths", str(ROOT),
         "--hidden-import", "yaml",
         "--hidden-import", "paramiko",
+        # pipeline.py runs these from tools/ at run time; PyInstaller does not
+        # pick them up automatically.
+        "--add-data", f"{ROOT / 'tools' / 'build_cvimodel.sh'}{os.pathsep}tools",
+        "--add-data", f"{ROOT / 'tools' / 'export_yolo11.py'}{os.pathsep}tools",
+        # The CLI wrapper runs with an *external* interpreter in the slim
+        # build; a copy of the export module is loaded by path from here.
+        "--add-data", f"{ROOT / 'studio' / 'export_yolo11.py'}{os.pathsep}tools/studio",
         "--exclude-module", "tkinter",
         "--exclude-module", "PyQt5",
         "--exclude-module", "PyQt6",
     ]
     cmd.append("--onefile" if mode == "onefile" else "--onedir")
     return cmd
+
+
+def slim_excludes() -> list[str]:
+    """Keep the ML stack out of the slim build.
+
+    The build environment often has torch installed for the full build, and
+    ``studio/export_yolo11.py`` imports ultralytics. PyInstaller follows that
+    import even though it only runs in the hidden export mode, which would
+    silently turn the "slim" executable into a ~1.5 GB bundle.
+    """
+    return [
+        "--exclude-module", "ultralytics",
+        "--exclude-module", "torch",
+        "--exclude-module", "torchvision",
+        "--exclude-module", "onnx",
+        "--exclude-module", "onnxruntime",
+        "--exclude-module", "onnxslim",
+    ]
 
 
 def ml_args() -> list[str]:
@@ -113,13 +139,16 @@ def ml_args() -> list[str]:
         "--hidden-import", "torchvision",
         "--hidden-import", "onnx",
         "--hidden-import", "onnxruntime",
+        "--hidden-import", "onnxslim",
+        "--collect-submodules", "onnxruntime",
     ]
 
 
-def copy_notices(target: Path) -> None:
-    """LGPL/Qt notices next to the binary (PySide6 is LGPL-3.0)."""
+def copy_notices(target: Path, with_ml: bool = False) -> None:
+    """License notices next to the binary (PySide6 is LGPL-3.0)."""
     target.mkdir(parents=True, exist_ok=True)
-    for name in NOTICES:
+    names = NOTICES + (("AGPL-3.0.txt",) if with_ml else ())
+    for name in names:
         src = REPO / "LICENSES" / name
         if src.is_file():
             shutil.copy2(src, target / name)
@@ -140,8 +169,10 @@ def build(mode: str, with_ml: bool) -> None:
         except ImportError:
             raise SystemExit(
                 "--with-ml needs ultralytics in the build environment:\n"
-                "  python -m pip install ultralytics")
+                "  python -m pip install ultralytics onnx onnxruntime onnxslim")
         cmd += ml_args()
+    else:
+        cmd += slim_excludes()
     if sys.platform.startswith("linux"):
         missing = []
         for soname in LINUX_XCB_LIBS:
@@ -170,7 +201,7 @@ def build(mode: str, with_ml: bool) -> None:
         folder = dist / name
         if not folder.is_dir():
             raise SystemExit(f"error: {folder} was not produced")
-        copy_notices(folder)
+        copy_notices(folder, with_ml)
         size = sum(p.stat().st_size for p in folder.rglob("*") if p.is_file())
         print(f"Done: {folder}/ ({size / (1024 * 1024):.1f} MiB)")
 

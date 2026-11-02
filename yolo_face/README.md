@@ -68,7 +68,8 @@ the installer copies the vendor runtime from the firmware
 (`/mnt/system/lib`, `/mnt/system/usr/lib`, `/mnt/system/usr/lib/3rd`) into
 `/root/yolo_face/runtime`, including `libcvi_tdl`, its shared OpenCV 3.2
 dependencies and `libz`. Models are uploaded from `MODELS_DIR` or
-`../vendor/models`; without them the models already on the board are used.
+`../vendor/models` (searched recursively, then placed in `models/face/`);
+without them the models already on the board are used.
 Use `PAYLOAD_DIR` to install a locally built package instead of downloading
 one.
 

@@ -54,8 +54,8 @@ SRC="$ROOT/$PROJECT/dist/board"
 [ -d "$SRC" ] || die "missing package skeleton: $SRC"
 
 case "$PROJECT" in
-    yolo_stream) APP=stream_yolo ;;
-    yolo_face)   APP=face_stream ;;
+    yolo_stream) APP=stream_yolo; MODEL_DIR=models ;;
+    yolo_face)   APP=face_stream; MODEL_DIR=models/face ;;
     *) die "unknown project: $PROJECT" ;;
 esac
 
@@ -68,7 +68,7 @@ say "staging $PROJECT"
 for f in "$SRC"/*.sh "$SRC/README.md"; do
     [ -f "$f" ] && cp -a "$f" "$STAGE/"
 done
-mkdir -p "$STAGE/models"
+mkdir -p "$STAGE/$MODEL_DIR"
 install -m 0755 "$BIN" "$STAGE/$APP"
 chmod 0755 "$STAGE"/*.sh
 
@@ -80,7 +80,7 @@ if [ -n "$VENDOR" ]; then
         cp -a "$VENDOR/lib/." "$STAGE/runtime/"
     fi
     if [ -d "$VENDOR/models" ]; then
-        cp -a "$VENDOR/models/." "$STAGE/models/"
+        cp -a "$VENDOR/models/." "$STAGE/$MODEL_DIR/"
     fi
 fi
 

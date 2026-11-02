@@ -8,7 +8,7 @@ The package deliberately contains **no vendor libraries and no models**: the
 Cvitek/Sophgo runtime is proprietary and models are usually AGPL-3.0
 derivatives of Ultralytics, so neither is redistributed. `install.sh` copies
 the libraries from the firmware of your board and uploads the models you
-choose. See `../../../THIRD_PARTY_NOTICES.md`.
+choose. See `THIRD_PARTY_NOTICES.md` in the repository.
 
 ## Installation
 
@@ -25,8 +25,8 @@ verifies its checksum, copies the files to `/root/yolo_stream` and then
 1. copies the vendor libraries from `/mnt/system/lib`,
    `/mnt/system/usr/lib` and `/mnt/system/usr/lib/3rd` into
    `/root/yolo_stream/runtime` (the firmware already has them);
-2. uploads `*.cvimodel` from `MODELS_DIR` or `../vendor/models` if either is
-   set and not empty;
+2. uploads every `.cvimodel`/`.names` file it finds below `MODELS_DIR` or
+   `../vendor/models` if either is set and not empty;
 3. verifies the package checksums on the board.
 
 You can also unpack the release tarball manually, copy its contents to
@@ -100,8 +100,8 @@ There are three ways to get models:
 
 Models derived from Ultralytics YOLOv8/YOLO11 are AGPL-3.0: if you publish
 them, publish the corresponding sources too. Face and SDK example models have
-no explicit license. See `../../../models/README.md` and
-`../../../THIRD_PARTY_NOTICES.md`.
+no explicit license. See `models/README.md` and `THIRD_PARTY_NOTICES.md` in
+the repository.
 
 Class names are not stored in `.cvimodel`. You can put a
 `<model_name>.names` file next to it (one name per line) — then boxes are

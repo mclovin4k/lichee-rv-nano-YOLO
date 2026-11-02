@@ -130,6 +130,12 @@ def _run_helper(argv: list[str]) -> int | None:
         LicheeYOLOStudio --yolo-cli detect train data=... model=...
         LicheeYOLOStudio --export-onnx best.pt 640
     """
+    if argv[:1] in (["--yolo-cli"], ["--export-onnx"]):
+        # A frozen build has no pip, and PyInstaller does not ship the
+        # package metadata that ultralytics uses to check versions. Without
+        # this, a working export tries "python -m pip install" on the
+        # executable itself.
+        os.environ.setdefault("ULTRALYTICS_SKIP_REQUIREMENTS_CHECKS", "1")
     if argv[:1] == ["--yolo-cli"]:
         sys.argv = ["yolo"] + argv[1:]
         try:
@@ -145,8 +151,12 @@ def _run_helper(argv: list[str]) -> int | None:
         # torch/ultralytics (importing them is the only reliable test).
         try:
             import ultralytics  # noqa: F401
+            from studio import pyenv
         except Exception as exc:  # noqa: BLE001 - any failure means "no"
             print(f"no: {exc}", file=sys.stderr)
+            return 1
+        if not pyenv.bundled_ml():
+            print("no: find_spec('ultralytics') failed", file=sys.stderr)
             return 1
         print("ok")
         return 0

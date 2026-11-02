@@ -309,9 +309,9 @@ build environment:
 ```sh
 # Linux: CPU-only torch, otherwise pip pulls several gigabytes of CUDA
 python -m pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
-python -m pip install ultralytics
+python -m pip install ultralytics onnx onnxruntime onnxslim
 # Windows
-python -m pip install ultralytics
+python -m pip install ultralytics onnx onnxruntime onnxslim
 ```
 
 The full bundle is a folder because a 1 GB one-file executable would unpack

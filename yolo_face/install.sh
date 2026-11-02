@@ -93,6 +93,19 @@ build_payload() {
     PAYLOAD_DIR="$TMP/payload"
 }
 
+stage_models() { # stage_models <src> <board-dir>
+    ensure_tmp
+    rm -rf "$TMP/models"
+    mkdir -p "$TMP/models"
+    find "$1" -type f \( -name '*.cvimodel' -o -name '*.names' \) \
+        -exec cp -f {} "$TMP/models/" \;
+    if [ -z "$(ls -A "$TMP/models" 2>/dev/null)" ]; then
+        warn "no .cvimodel or .names files under $1"
+        return 1
+    fi
+    tar -C "$TMP/models" -cf - . | $RSSH "mkdir -p $2 && tar -xf - -C $2"
+}
+
 prepare_payload() {
     if [ "$BUILD" = "1" ]; then
         build_payload
@@ -199,8 +212,7 @@ fi
 
 if [ -n "$MODEL_SRC" ]; then
     say "uploading models from $MODEL_SRC"
-    $RSSH "mkdir -p $DEST/models/face"
-    tar -C "$MODEL_SRC" -cf - . | $RSSH "tar -xf - -C $DEST/models/face"
+    stage_models "$MODEL_SRC" "$DEST/models/face" || true
     $RSSH "ls -1 $DEST/models/face | head -20"
 else
     say "models"
@@ -208,6 +220,27 @@ else
     printf 'no models uploaded (MODELS_DIR is not set); the models already on\n'
     printf 'the board are used.\n'
 fi
+
+say "checking face models on the board"
+$RSSH '
+set -e
+DEST='$DEST'
+mkdir -p "$DEST/models/face"
+for n in scrfd_det_face_432_768_INT8_cv181x.cvimodel \
+         feature_cviface_112_112_INT8_cv181x.cvimodel \
+         cls_rgbliveness_256_256_INT8_cv181x.cvimodel; do
+    [ -f "$DEST/models/face/$n" ] && continue
+    for d in /mnt/system/usr/bin/ai/models \
+             /mnt/system/usr/bin/ai/models/face \
+             /root/models; do
+        if [ -f "$d/$n" ]; then
+            cp -L "$d/$n" "$DEST/models/face/$n"
+            echo "  $n (from $d)"
+            break
+        fi
+    done
+done
+' || warn "could not check the stock face models on the board"
 
 if [ -f "$PAYLOAD_DIR/md5sums.txt" ]; then
     say "verifying checksums"

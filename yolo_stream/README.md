@@ -230,9 +230,9 @@ The archive contains only this project's binary and scripts. Right after the
 upload the installer runs a small script **on the board** that copies the
 vendor libraries from `/mnt/system/lib`, `/mnt/system/usr/lib` and
 `/mnt/system/usr/lib/3rd` into `/root/yolo_stream/runtime`. Models are uploaded
-from `MODELS_DIR` or `../vendor/models` when either is set; otherwise the
-models already on the board are used. Use `PAYLOAD_DIR` to install a locally
-built package instead.
+from `MODELS_DIR` or `../vendor/models` when either is set (the search is
+recursive); otherwise the models already on the board are used. Use
+`PAYLOAD_DIR` to install a locally built package instead.
 
 The installer preserves already uploaded models, and `/root/faces` is used
 only by `yolo_face`. The board address is not fixed: it differs between

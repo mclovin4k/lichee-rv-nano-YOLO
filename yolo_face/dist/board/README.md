@@ -7,7 +7,7 @@ The package deliberately contains **no vendor libraries and no models**: the
 Cvitek/Sophgo runtime is proprietary and the face models come from the TDL SDK
 without a stated license, so neither is redistributed. `install.sh` copies the
 libraries from the firmware of your board and uploads the models you choose.
-See `../../../THIRD_PARTY_NOTICES.md`.
+See `THIRD_PARTY_NOTICES.md` in the repository.
 
 ## Installation
 
@@ -24,8 +24,8 @@ its checksum, copies the files to `/root/yolo_face` and then
 1. copies `libcvi_tdl`, its dependencies (`libcnpy`, `libcvi_ive`, shared
    OpenCV 3.2), the camera/ISP/VENC middleware and the rest of the vendor
    runtime from the firmware into `/root/yolo_face/runtime`;
-2. uploads `*.cvimodel` from `MODELS_DIR` or `../vendor/models` into
-   `models/face/`;
+2. uploads every `.cvimodel`/`.names` file it finds below `MODELS_DIR` or
+   `../vendor/models` into `models/face/`;
 3. verifies the package checksums on the board.
 
 Then:
@@ -94,11 +94,12 @@ SY_BUNDLED_LOADER=1 /root/yolo_face/start_face.sh restart
 | `cls_rgbliveness_256_256_INT8_cv181x.cvimodel` | liveness check |
 
 They are part of the Cvitek TDL SDK examples and are already present on the
-board image in `/mnt/system/usr/bin/ai/models`; `install.sh` copies the ones it
-finds there when you pass `MODELS_DIR`, and
-`scripts/fetch-vendor.sh --download` fetches the SDK detector
-(`scrfd_768_432_int8_1x.cvimodel`) if you prefer to start from that.
+board image in `/mnt/system/usr/bin/ai/models`. If you do not upload your own
+copies, `install.sh` looks there and copies the three files into
+`models/face/` for you. `scripts/fetch-vendor.sh --download` fetches the SDK
+detector (`scrfd_768_432_int8_1x.cvimodel`) if you prefer to start from that.
 
 The SCRFD architecture is MIT (InsightFace); the weights, `cviface` and the
 liveness model have no explicit license in the SDK. Check the terms with
-Cvitek/Sophgo before redistributing them. See `../../../models/README.md`.
+Cvitek/Sophgo before redistributing them. See `models/README.md` in the
+repository.

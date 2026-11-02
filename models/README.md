@@ -42,7 +42,9 @@ Stock images ship detection and face models under
 face models from there when you point `MODELS_DIR` at it:
 
 ```sh
-MODELS_DIR=/mnt/system/usr/bin/ai/models ./install.sh <IP>   # on the board
+# copy the models off the board first (or point MODELS_DIR at a local copy)
+scripts/fetch-vendor.sh --board <IP>
+cd yolo_stream && MODELS_DIR=../vendor/models ./install.sh <IP>
 ```
 
 ### 3. SDK examples

@@ -40,7 +40,7 @@ source **you** control, on your machine:
 
 `yolo_stream/install.sh` and `yolo_face/install.sh` repeat the board step
 during installation: they copy the vendor libraries from the board firmware
-into `$DEST/runtime` and upload whatever models are in `MODELS_DIR` (or in
+into `$DEST/runtime` and upload every model found under `MODELS_DIR` (or under
 `vendor/models`). Nothing vendor-specific is transferred between machines by
 this project.
 
@@ -111,6 +111,7 @@ The `yolo_studio-*-full` archives additionally contain:
 | ultralytics | AGPL-3.0 | [ultralytics/ultralytics](https://github.com/ultralytics/ultralytics) |
 | PyTorch, torchvision | BSD-3-Clause | [pytorch.org](https://pytorch.org/) |
 | onnx, onnxruntime | Apache-2.0 / MIT | [onnx.ai](https://onnx.ai/) |
+| onnxslim | MIT | [inisis/OnnxSlim](https://github.com/inisis/OnnxSlim) |
 
 The Studio calls the ultralytics command line as a separate process
 (`--yolo-cli`), so the application and the model tooling are separate
