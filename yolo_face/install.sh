@@ -13,7 +13,7 @@
 # The vendor libraries are proprietary and are not redistributed, so they are
 # copied from the board firmware itself (they are already on the image).
 # Models are uploaded from MODELS_DIR or from ../vendor/models when present;
-# otherwise the models already on the board are kept.
+# otherwise the face models already on the board are copied into models/face/.
 #
 # The board address is not fixed: USB/RNDIS, Wi-Fi and Ethernet differ.
 # Nothing is started automatically.

@@ -38,8 +38,9 @@ together with the `.cvimodel`.
 
 Stock images ship detection and face models under
 `/mnt/system/usr/bin/ai/models`. `start_stream.sh` searches
-`/mnt/system/usr/bin/ai/models` automatically, and `install.sh` copies the
-face models from there when you point `MODELS_DIR` at it:
+`/mnt/system/usr/bin/ai/models` automatically, and `yolo_face/install.sh`
+copies the three stock face models into `models/face/` when you do not upload
+your own:
 
 ```sh
 # copy the models off the board first (or point MODELS_DIR at a local copy)

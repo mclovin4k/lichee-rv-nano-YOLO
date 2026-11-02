@@ -226,8 +226,8 @@ directory. To embed the vendor files for a private, offline archive, add
 The repository does not ship the `scrfd_det_face_432_768`,
 `feature_cviface_112_112` and `cls_rgbliveness_256_256` models: they come from
 the TDL SDK examples and have no license file. They are already present in
-`/mnt/system/usr/bin/ai/models` on a stock image; `install.sh` uploads them
-from `MODELS_DIR` when you point it there. See
+`/mnt/system/usr/bin/ai/models` on a stock image; `install.sh` copies them
+from there into `models/face/` when you do not upload your own. See
 [`../models/README.md`](../models/README.md).
 
 The vendor libraries the application loads at run time (`libcvi_tdl.so`,
