@@ -19,7 +19,6 @@ libraries from the board firmware and upload only the models you provide. See
 | [`yolo_stream/`](yolo_stream/README.md) | MJPEG 960×540 + YOLOv8/YOLO11 on the NPU, port 7777 | `yolo_stream/install.sh <IP>` → `start_stream.sh auto` |
 | [`yolo_face/`](yolo_face/README.md) | MJPEG + face detection/recognition (SCRFD + cviface) | `yolo_face/install.sh <IP>` → `start_face.sh start` |
 | [`yolo_studio/`](yolo_studio/README.md) | Desktop tool: dataset import/capture, labeling, training, `.cvimodel` export | download the Linux/Windows build from Releases |
-| [`tpu-fix/`](tpu-fix/README.md) | TPU timeout patcher (`soph_tpu.ko`) without redistributing the `.ko` | `tpu-fix/patch_tpu.sh` on the board |
 
 <img width="1919" height="823" alt="image" src="https://github.com/user-attachments/assets/4044f4de-e4af-47e8-b3e9-9adbd29fef01" />
 
@@ -64,7 +63,6 @@ MODELS_DIR=~/models/my-detector ./install.sh <IP>  # upload your .cvimodel files
 ./install.sh --build <IP>                          # cross-compile locally instead
 RELEASE=v1.0.1 ./install.sh <IP>                   # pin a release
 PAYLOAD_DIR=/path/to/unpacked-package ./install.sh <IP>
-TPU_PATCH=1 ./install.sh <IP>                      # also apply the TPU timeout fix
 ```
 
 The installer stops an old stream/face process, copies the package to
@@ -230,10 +228,6 @@ git push origin v1.0.1
   (`/mnt/system/usr/bin/ai/models`), or fetch the SDK examples with
   `scripts/fetch-vendor.sh --download`. See
   [`models/README.md`](models/README.md).
-- **The TPU fix is a patcher, not a GPL binary.** `tpu-fix/patch_tpu.sh`
-  changes the timeout in the module already installed on the board, creates a
-  backup and can roll back. Neither driver sources nor a `.ko` are included in
-  the repository.
 - **Third-party licenses** are described in
   [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md), with full texts in
   `LICENSES/`. The repository redistributes none of them; what you build or

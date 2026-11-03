@@ -11,7 +11,7 @@ extern "C" {
 #endif
 
 /* Bounded wait for one forward. Comfortably above a normal inference (~40 ms)
-   and below the driver's completion timeout (1 s with the patched soph_tpu),
+   and below the driver's completion timeout,
    so a stall is ours to handle rather than something the process sits
    through. */
 #define YOLO8_FORWARD_DEADLINE_MS 800

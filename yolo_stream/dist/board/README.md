@@ -116,8 +116,8 @@ uploads this file together with the model.
   ~12-15 Hz, boxes are fresh.
 
 Known quirks: the application survives a TPU wedge (`run dmabuf timeout`)
-by itself (boxes disappear for a few seconds, the stream does not break; with
-the TPU patch the wedge is limited to ~1 s); noisy
+by itself — boxes disappear until the driver timeout expires (about 60 s),
+but the stream keeps running; noisy
 `isp_clut_ctrl_postprocess` lines in the log are harmless. If the stream
 still gets stuck, run `/root/yolo_stream/start_stream.sh restart`.
 

@@ -19,7 +19,6 @@ Snapshot date: 2026-11-02.
 | Board applications | `yolo_stream/`, `yolo_face/` sources and scripts | MIT |
 | Desktop studio | `yolo_studio/` sources | MIT |
 | Camera patch | `*/patches/opencv-mobile-4.13.0-cvi-capture.patch` | Apache-2.0 (derivative of opencv-mobile) |
-| TPU timeout fix | `tpu-fix/patch_tpu.sh` | MIT (patches a GPL-2.0 module on the user's device) |
 | Docs, CI | `README.md`, `docs/`, `.github/workflows/` | MIT |
 
 No `.so`, `.cvimodel`, `.ko`, `.a` or other vendor binary is tracked in git,
@@ -119,14 +118,6 @@ programs that are merely distributed together. The AGPL-3.0 text is in
 `LICENSES/AGPL-3.0.txt`; the exact versions are listed in the archive's
 `THIRD_PARTY_NOTICES.md`. If you modify ultralytics and redistribute the
 bundle, you must publish your modified sources under the AGPL.
-
-## tpu-fix and the GPL module
-
-`tpu-fix/patch_tpu.sh` changes a few bytes in the `soph_tpu.ko` module
-**already installed on the board**. The module is part of the Sophgo firmware
-and is distributed under GPL-2.0 (`LICENSES/GPL-2.0.txt`). The repository
-contains neither the `.ko` nor the driver sources: the patcher only changes
-the timeout in the binary on the user's device and keeps a backup.
 
 ## Runtime libraries on the board
 

@@ -7,7 +7,6 @@
 #   MODELS_DIR=~/models/my-detector ./install.sh <IP>    # upload your models
 #   ./install.sh --build <IP>           # cross-compile here instead of downloading
 #   RELEASE=v1.0.1 ./install.sh <IP>    # pin a release
-#   TPU_PATCH=1 ./install.sh <IP>       # also apply the TPU timeout fix
 #
 # The release package contains this project's code only (binary + scripts).
 # The vendor libraries are proprietary and are not redistributed, so they are
@@ -32,9 +31,7 @@ PAYLOAD_DIR=${PAYLOAD_DIR:-"$ROOT/dist/board"}
 MODELS_DIR=${MODELS_DIR:-}
 VENDOR_DIR=${VENDOR_DIR:-"$ROOT/../vendor"}
 BOARD_TMP=/tmp/yolo_stream_install.$$
-TPU_REF=${TPU_REF:-master}
 BUILD=0
-TPU_PATCH=${TPU_PATCH:-0}
 TMP=
 
 # Libraries the application loads at run time; copied from the board firmware.
@@ -132,8 +129,7 @@ prepare_payload() {
 while [ $# -gt 0 ]; do
     case "$1" in
         --build)     BUILD=1; shift ;;
-        --tpu-patch) TPU_PATCH=1; shift ;;
-        -h|--help)   sed -n '2,21p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        -h|--help)   sed -n '2,/^set -eu/{/^set -eu/d;s/^# \{0,1\}//;p}' "$0"; exit 0 ;;
         *)           break ;;
     esac
 done
@@ -222,25 +218,6 @@ if [ -f "$PAYLOAD_DIR/md5sums.txt" ]; then
         warn "the package checksums do not match on the board"
 fi
 
-if [ "$TPU_PATCH" = "1" ]; then
-    say "applying TPU timeout fix"
-    ensure_tmp
-    if [ -f "$ROOT/../tpu-fix/patch_tpu.sh" ]; then
-        mkdir -p "$TMP/tpu-fix"
-        cp "$ROOT/../tpu-fix/patch_tpu.sh" "$ROOT/../tpu-fix/README.md" \
-            "$TMP/tpu-fix/"
-    else
-        mkdir -p "$TMP/tpu-fix"
-        fetch "$REPO_URL/raw/$TPU_REF/tpu-fix/patch_tpu.sh" \
-            "$TMP/tpu-fix/patch_tpu.sh" || die "cannot download patch_tpu.sh"
-        fetch "$REPO_URL/raw/$TPU_REF/tpu-fix/README.md" \
-            "$TMP/tpu-fix/README.md" || true
-    fi
-    tar -C "$TMP/tpu-fix" -cf - . | \
-        $RSSH "rm -rf /root/tpu-fix && mkdir -p /root/tpu-fix && tar -xf - -C /root/tpu-fix"
-    $RSSH "sh /root/tpu-fix/patch_tpu.sh"
-    say "reboot is required for the TPU module fix"
-fi
 
 say "camera configuration"
 $RSSH '

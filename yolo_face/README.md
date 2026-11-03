@@ -52,7 +52,6 @@ chmod +x install.sh
 BOARD_IP=<IP> ./install.sh
 RELEASE=v1.0.1 ./install.sh <IP>
 PAYLOAD_DIR=/path/to/package ./install.sh <IP>
-TPU_PATCH=1 ./install.sh <IP>   # also apply the TPU timeout fix
 ```
 
 The board address is not fixed: it differs between networks (USB/RNDIS,
@@ -64,8 +63,7 @@ Wi-Fi, Ethernet). By default the installer:
 4. copies the package to `/root/yolo_face`, preserving `/root/faces` (the
    gallery);
 5. verifies the package md5 list on the board;
-6. optionally applies `../tpu-fix/patch_tpu.sh`;
-7. does **not** add an autostart entry.
+6. does **not** add an autostart entry.
 
 The archive contains only this project's binary and scripts. After the upload
 the installer copies the vendor runtime from the firmware
@@ -273,8 +271,7 @@ to the official `nihui/opencv-mobile` v36 release.
   accepts it; the default is 0.
 - The liveness model is disabled (see above).
 - TPU hangs (`wait dmabuf failed[-110]`, `run cmdbuf failed:2`) are a platform
-  driver defect. With the fix from `../tpu-fix/`, the wait is reduced from
-  ~60 s to ~1 s; the application recreates the TDL handle.
+  driver defect; the application recreates the TDL handle.
 - Closing the camera sometimes hangs in the driver (`vb_qbuf`, state `D`); if
   the process cannot be killed, a `reboot` is required.
 - MJPEG q75 at 30 fps is about 9 Mbit/s.

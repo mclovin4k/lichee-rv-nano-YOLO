@@ -15,7 +15,6 @@ and uploads the models you provide. See `../../THIRD_PARTY_NOTICES.md`.
 | Board files: binary, scripts, empty models/ | `board/README.md` |
 | Release package | `yolo_stream-board.tar.gz` on GitHub Releases |
 | SSH installer (downloads the release) | `../install.sh` |
-| TPU hang fix (patcher, no `.ko`) | `../../tpu-fix/` |
 | Sources and build | `../` |
 
 Quick start: `../install.sh <IP>` downloads the latest release, verifies its

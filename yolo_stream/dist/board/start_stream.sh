@@ -74,7 +74,7 @@ stop_app() {
     if pid_alive "$P"; then
         kill -9 "$P" 2>/dev/null || true
         # A thread stuck in a TPU ioctl ignores SIGKILL until the driver
-        # timeout expires (~60 s on the stock module, ~1 s with tpu-fix).
+        # timeout expires (~60 s on the stock module).
         n=0
         while [ "$n" -lt 70 ] && pid_alive "$P"; do
             sleep 1

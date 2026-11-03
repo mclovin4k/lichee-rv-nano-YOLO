@@ -71,32 +71,6 @@ Key design decisions:
   any YOLOv8/v11-det export works (int8 and fp32), not just the hard-coded 80
   classes.
 
-## Known platform defect (cvi-tpu, "run dmabuf timeout")
-
-The TPU driver periodically blocks forward in `cvi_tpu_ioctl`; it releases
-its wait on its own timeout of **~60 s** (in dmesg: `run dmabuf timeout`).
-The ready-made `soph_tpu.ko` patcher lives in `../tpu-fix/`: it reduces the
-wait to ~1 s. The `.ko` is not committed to the repository — the patcher runs
-on the board and backs up the original (see `../tpu-fix/README.md`).
-
-What the measurements showed (on the original driver):
-
-- the wedge arrives sooner the hotter the pipeline: on a 30 fps stream the
-  first one comes within tens of seconds, at 4 fps after ~20–30 s, and
-  **without a camera** (the `tpu_probe` bench: 18,500 consecutive inferences)
-  it does not happen at all;
-- neither signals (`pthread_kill` with a handler without `SA_RESTART`) nor a
-  reset pulse (`tpu-reset.sh`) clear the wedge — only the driver timeout does;
-- after the timeout the detector unloads and re-registers the model by itself
-  and continues working; the stream keeps running the whole time.
-
-Measured detector "uptime": ~40% of the time on a 30 fps stream (without the
-TPU fix), ~55–60% at 4 fps (in the log, `det_age` is the age of the last
-valid boxes). With the freshness policy described above, the cost of the
-defect is boxes disappearing during a wedge (`no det Ns` in the frame)
-rather than the stream stopping or boxes from a scene that is already gone:
-late results are dropped with a `det: dropped stale result` log entry.
-
 ## Detection accuracy (comparison with the TDL reference)
 
 The boxes were compared with the board's reference pipeline — the TDL sample
@@ -219,7 +193,6 @@ chmod +x install.sh
 BOARD_IP=<IP> ./install.sh
 RELEASE=v1.0.1 ./install.sh <IP>
 PAYLOAD_DIR=/path/to/package ./install.sh <IP>
-TPU_PATCH=1 ./install.sh <IP>   # also apply the TPU timeout fix
 ```
 
 By default the installer downloads `yolo_stream-board.tar.gz` from the latest
@@ -373,8 +346,8 @@ curl -s -m 5 http://<IP>:7777/ | head -c 200000 > /tmp/m.bin
   (exit 139) — the camera is released, and the next start brings up the VPSS
   group ("reclaiming stale group").
 - A process stuck in the TPU ioctl cannot be killed with `kill -9` until the
-  driver timeout expires (with the TPU fix, ~1 s); `start_stream.sh` waits for
-  it to disappear, so no "old/new" process pair remains.
+  driver timeout expires; `start_stream.sh` waits for it to disappear, so no
+  "old/new" process pair remains.
 - MJPEG q75 at 30 fps is about 9 Mbit/s; use `SY_ENC_EVERY` to save
   bandwidth.
 - Third-party model and library licenses are in `../THIRD_PARTY_NOTICES.md`.
