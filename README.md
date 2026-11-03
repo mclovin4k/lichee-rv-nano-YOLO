@@ -6,7 +6,7 @@
 A working toolkit for the LicheeRV Nano (SG2002 / CV181x) with the GC4653
 camera: MJPEG streaming, YOLO detection on the NPU, face recognition, and a
 desktop tool for capturing datasets, labeling and building models. The
-repository contains four independent projects.
+repository contains three independent projects.
 
 The repository contains **its own code only**. Cvitek/Sophgo runtime
 libraries and `.cvimodel` models are not redistributed: they are proprietary
