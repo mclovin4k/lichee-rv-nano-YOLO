@@ -23,30 +23,38 @@ libraries from the board firmware and upload only the models you provide. See
 
 ## Demo
 
+Two modes on the same camera — object detection and face recognition:
+
+<table>
+  <tr>
+    <td width="50%" align="center" valign="top">
+      <a href="yolo_stream/README.md">
+        <img src="https://github.com/user-attachments/assets/05e34ccf-80be-4021-815d-4fe90fc48b8d"
+             width="100%" alt="YOLO object detection on the LicheeRV Nano NPU">
+      </a>
+      <br>
+      <sub><b><a href="yolo_stream/README.md">yolo_stream</a></b> —
+      YOLOv8/YOLO11 detection on the NPU</sub>
+    </td>
+    <td width="50%" align="center" valign="top">
+      <a href="yolo_face/README.md">
+        <img src="https://github.com/user-attachments/assets/46709788-40a3-4df0-a8fe-4b74bdf402a3"
+             width="100%" alt="Face detection and recognition on the LicheeRV Nano NPU">
+      </a>
+      <br>
+      <sub><b><a href="yolo_face/README.md">yolo_face</a></b> —
+      SCRFD detection and cviface recognition</sub>
+    </td>
+  </tr>
+</table>
+
 **Lichee YOLO Studio** — import a dataset, label frames, train on CPU and export
 a `.cvimodel` for the board:
 
 <p align="center">
-  <img src="docs/images/yolo-studio.png" width="1150"
+  <img src="docs/images/yolo-studio.png" width="1100"
        alt="Lichee YOLO Studio label page with two drone bounding boxes">
 </p>
-
-**MJPEG stream** with NPU detection on the LicheeRV Nano:
-
-<p align="center">
-  <img width="1919" height="823" alt="LicheeRV Nano YOLO toolkit screenshot" src="https://github.com/user-attachments/assets/4044f4de-e4af-47e8-b3e9-9adbd29fef01" />
-</p>
-
-<!-- Demo GIFs: upload the recordings to docs/images/ and uncomment this block.
-     Suggested files: demo-capture.gif, demo-label.gif, demo-train.gif,
-     demo-board.gif.
-<p align="center">
-  <img src="docs/images/demo-capture.gif" width="900" alt="Capturing frames from the board camera">
-  <img src="docs/images/demo-label.gif" width="900" alt="Labeling frames and tracking boxes with optical flow">
-  <img src="docs/images/demo-train.gif" width="900" alt="Preparing a dataset, training and building a cvimodel">
-  <img src="docs/images/demo-board.gif" width="900" alt="Uploading a cvimodel and starting the NPU stream">
-</p>
--->
 
 `yolo_stream` and `yolo_face` share the camera and port 7777, so starting one
 stops the other. No autostart is installed: after boot you choose the mode
@@ -110,6 +118,11 @@ Both Studio variants need no Python and no installer:
 - **Windows slim / full:** same archives, `LicheeYOLOStudio.exe` or
   `LicheeYOLOStudio-full\LicheeYOLOStudio-full.exe`. If SmartScreen appears,
   choose **More info → Run anyway**.
+
+On Windows, `tpu-mlir` runs inside **WSL 2**: the Studio can create the
+environment there, calls `wsl.exe` for the `.cvimodel` step and translates the
+paths automatically. Install WSL 2 once with `wsl --install` if it is not
+present; the ONNX file itself is portable.
 
 The Qt X11 library `libxcb-cursor.so.0` is bundled in the Linux builds. The
 OpenGL/EGL stack comes from the system (`libegl1`, `libgl1`, `libxkbcommon0`,

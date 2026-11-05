@@ -1,8 +1,11 @@
 # face_stream — MJPEG + NPU face recognition (LicheeRV Nano, SG2002/CV181x)
 
-<img width="1919" height="823" alt="face_stream MJPEG web UI with recognized faces" src="https://github.com/user-attachments/assets/fb50ce8b-873b-45b7-92f6-5292f71f87e1" />
-
-Web UI in browser 
+<p align="center">
+  <img width="900" alt="Face detection and recognition on the LicheeRV Nano NPU"
+       src="https://github.com/user-attachments/assets/46709788-40a3-4df0-a8fe-4b74bdf402a3">
+  <br>
+  <sub>MJPEG at 960×540 with SCRFD detection and cviface recognition.</sub>
+</p>
 
 A ready-to-run application for the LicheeRV Nano with the GC4653 camera:
 960×540 MJPEG on port 7777, SCRFD face detection, gallery-based recognition
@@ -123,6 +126,13 @@ port 7777. The reverse is also true: `yolo_stream/start_stream.sh` stops
 - Log: `/root/yolo_face/log/face.log`
 - Gallery: `/root/faces/<name>/feature.bin` (plus `meta.json`,
   `preview.jpg`)
+
+<p align="center">
+  <img width="1000" alt="face_stream browser UI with recognized faces"
+       src="https://github.com/user-attachments/assets/fb50ce8b-873b-45b7-92f6-5292f71f87e1">
+  <br>
+  <sub>The browser UI: video, recognized names and the face gallery.</sub>
+</p>
 
 The supervisor restarts the application if the watchdog returns code 2 (TPU
 hang). A normal exit via SIGINT is not restarted.

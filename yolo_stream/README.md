@@ -9,6 +9,13 @@ originally based on
 [ret7020/LicheeRVNano](https://github.com/ret7020/LicheeRVNano); the current
 implementation has been rewritten (see below).
 
+<p align="center">
+  <img width="900" alt="YOLO object detection running on the LicheeRV Nano NPU"
+       src="https://github.com/user-attachments/assets/05e34ccf-80be-4021-815d-4fe90fc48b8d">
+  <br>
+  <sub>MJPEG at 960×540 with YOLO boxes computed on the NPU.</sub>
+</p>
+
 ## Contents
 
 | Item | Location |
