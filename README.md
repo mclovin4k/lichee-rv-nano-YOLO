@@ -20,6 +20,9 @@ libraries from the board firmware and upload only the models you provide. See
 | [`yolo_face/`](yolo_face/README.md) | MJPEG + face detection/recognition (SCRFD + cviface) | `yolo_face/install.sh <IP>` → `start_face.sh start` |
 | [`yolo_studio/`](yolo_studio/README.md) | Desktop tool: dataset import/capture, labeling, training, `.cvimodel` export | download the Linux/Windows build from Releases |
 
+
+<img width="806" height="453" alt="coco (1)" src="https://github.com/user-attachments/assets/b0a446d2-9be6-414f-9f93-12a123a07e73" />
+
 <img width="1919" height="823" alt="image" src="https://github.com/user-attachments/assets/4044f4de-e4af-47e8-b3e9-9adbd29fef01" />
 
 `yolo_stream` and `yolo_face` share the camera and port 7777, so starting one
