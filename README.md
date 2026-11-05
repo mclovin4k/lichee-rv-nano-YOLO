@@ -43,7 +43,7 @@ Two modes on the same camera — object detection and face recognition:
       </a>
       <br>
       <sub><b><a href="yolo_face/README.md">yolo_face</a></b> —
-      SCRFD detection and cviface recognition</sub>
+      SCRFD detection, cviface recognition and blink liveness</sub>
     </td>
   </tr>
 </table>

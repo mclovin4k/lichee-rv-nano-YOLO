@@ -4,7 +4,8 @@
   <img width="900" alt="Face detection and recognition on the LicheeRV Nano NPU"
        src="https://github.com/user-attachments/assets/46709788-40a3-4df0-a8fe-4b74bdf402a3">
   <br>
-  <sub>MJPEG at 960×540 with SCRFD detection and cviface recognition.</sub>
+  <sub>MJPEG at 960×540 with SCRFD detection, cviface recognition and blink
+  liveness.</sub>
 </p>
 
 A ready-to-run application for the LicheeRV Nano with the GC4653 camera:
