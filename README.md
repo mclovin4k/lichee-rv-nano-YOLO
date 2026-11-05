@@ -29,7 +29,7 @@ Two modes on the same camera — object detection and face recognition:
   <tr>
     <td width="50%" align="center" valign="top">
       <a href="yolo_stream/README.md">
-        <img src="https://github.com/user-attachments/assets/05e34ccf-80be-4021-815d-4fe90fc48b8d"
+        <img src="docs/images/demo-stream.gif"
              width="100%" alt="YOLO object detection on the LicheeRV Nano NPU">
       </a>
       <br>
@@ -38,7 +38,7 @@ Two modes on the same camera — object detection and face recognition:
     </td>
     <td width="50%" align="center" valign="top">
       <a href="yolo_face/README.md">
-        <img src="https://github.com/user-attachments/assets/46709788-40a3-4df0-a8fe-4b74bdf402a3"
+        <img src="docs/images/demo-face.gif"
              width="100%" alt="Face detection and recognition on the LicheeRV Nano NPU">
       </a>
       <br>
