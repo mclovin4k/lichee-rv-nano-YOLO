@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
 from ..board import Board, BoardError
 from ..camera import CameraThread
 from ..dataset import Dataset, parse_size
+from .theme import accent, primary
 from .widgets import FrameView, Worker
 
 STEPS: list[tuple[str, str, float]] = [
@@ -59,11 +60,14 @@ class CapturePage(QWidget):
 
     def _build_ui(self) -> None:
         root = QVBoxLayout(self)
+        root.setSpacing(12)
         top = QHBoxLayout()
+        top.setSpacing(12)
 
         # --- dataset
         ds_box = QGroupBox("Dataset")
         ds_lay = QVBoxLayout(ds_box)
+        ds_lay.setSpacing(8)
         self.ds_path = QLabel("not selected")
         self.ds_path.setWordWrap(True)
         self.ds_path.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
@@ -75,31 +79,38 @@ class CapturePage(QWidget):
         self.btn_open.clicked.connect(self._open_dataset)
         row.addWidget(self.btn_new)
         row.addWidget(self.btn_open)
+        row.addStretch(1)
         ds_lay.addLayout(row)
         cls_row = QHBoxLayout()
-        cls_row.addWidget(QLabel("Classes:"))
+        cls_label = QLabel("Classes:")
+        cls_label.setFixedWidth(88)
+        cls_row.addWidget(cls_label)
         self.cls_edit = QLineEdit()
         self.cls_edit.setPlaceholderText("e.g. drone or drone, person")
         self.cls_edit.setToolTip(
             "Comma-separated class names. Order = id: the first is 0, the second is 1.")
         cls_row.addWidget(self.cls_edit, 1)
         self.btn_class = QPushButton("OK")
-        self.btn_class.setFixedWidth(44)
+        self.btn_class.setFixedWidth(56)
         self.btn_class.clicked.connect(self._save_class)
         cls_row.addWidget(self.btn_class)
         ds_lay.addLayout(cls_row)
         self.ds_stats = QLabel("")
+        self.ds_stats.setObjectName("Muted")
         ds_lay.addWidget(self.ds_stats)
 
         size_row = QHBoxLayout()
-        size_row.addWidget(QLabel("Import size:"))
+        size_label = QLabel("Import size:")
+        size_label.setFixedWidth(88)
+        size_row.addWidget(size_label)
         self.import_size = QLineEdit(str(self.cfg.get("import_size", "keep")))
         self.import_size.setPlaceholderText("keep or 640x480")
         self.import_size.setToolTip(
             "Target size for imported images: 'keep' keeps the original size; "
             "640x480 letterboxes (gray padding) and transforms YOLO labels.")
-        self.import_size.setMaximumWidth(150)
-        size_row.addWidget(self.import_size, 1)
+        self.import_size.setFixedWidth(150)
+        size_row.addWidget(self.import_size)
+        size_row.addStretch(1)
         ds_lay.addLayout(size_row)
         self.btn_import = QPushButton("Import images from folder…")
         self.btn_import.setToolTip(
@@ -107,8 +118,10 @@ class CapturePage(QWidget):
             "imported too (next to the image or in the sibling labels/ folder); "
             "a data.yaml/classes.txt in the source folder maps class ids by name.")
         self.btn_import.clicked.connect(self._import_images)
+        accent(self.btn_import)
         ds_lay.addWidget(self.btn_import)
         self.import_status = QLabel("")
+        self.import_status.setObjectName("Muted")
         self.import_status.setWordWrap(True)
         self.import_status.setTextInteractionFlags(
             Qt.TextInteractionFlag.TextSelectableByMouse)
@@ -117,6 +130,7 @@ class CapturePage(QWidget):
         # --- camera
         cam_box = QGroupBox("Camera")
         cam_lay = QFormLayout(cam_box)
+        cam_lay.setSpacing(8)
         self.src_combo = QComboBox()
         self.src_combo.addItem("Board (clean stream)", "board")
         self.src_combo.addItem("USB camera", "usb")
@@ -124,8 +138,8 @@ class CapturePage(QWidget):
         self.src_combo.setCurrentIndex(max(0, idx))
         cam_lay.addRow("Source:", self.src_combo)
 
-        usb_row = QWidget()
-        usb_lay = QHBoxLayout(usb_row)
+        self.usb_row = QWidget()
+        usb_lay = QHBoxLayout(self.usb_row)
         usb_lay.setContentsMargins(0, 0, 0, 0)
         usb_lay.addWidget(QLabel("/dev/video"))
         self.usb_index = QSpinBox()
@@ -133,9 +147,11 @@ class CapturePage(QWidget):
         self.usb_index.setValue(int(self.cfg.get("usb_index", 0)))
         usb_lay.addWidget(self.usb_index)
         usb_lay.addStretch(1)
-        cam_lay.addRow("", usb_row)
+        cam_lay.addRow(self.usb_row)
 
-        board_row = QHBoxLayout()
+        self.board_row = QWidget()
+        board_lay = QHBoxLayout(self.board_row)
+        board_lay.setContentsMargins(0, 0, 0, 0)
         self.btn_prepare = QPushButton("Clean stream")
         self.btn_prepare.setToolTip(
             "Stop the YOLO stream on the board and start a stream without detection or boxes")
@@ -143,21 +159,25 @@ class CapturePage(QWidget):
         self.btn_normal = QPushButton("Restore YOLO")
         self.btn_normal.setToolTip("Stop capture and restore the normal stream with boxes")
         self.btn_normal.clicked.connect(self._restore_board)
-        board_row.addWidget(self.btn_prepare)
-        board_row.addWidget(self.btn_normal)
-        cam_lay.addRow(board_row)
+        board_lay.addWidget(self.btn_prepare)
+        board_lay.addWidget(self.btn_normal)
+        cam_lay.addRow(self.board_row)
 
         conn_row = QHBoxLayout()
         self.btn_connect = QPushButton("Connect camera")
         self.btn_connect.clicked.connect(self._connect_camera)
+        primary(self.btn_connect)
         self.btn_disconnect = QPushButton("Disconnect")
         self.btn_disconnect.clicked.connect(self._disconnect_camera)
         conn_row.addWidget(self.btn_connect)
         conn_row.addWidget(self.btn_disconnect)
         cam_lay.addRow(conn_row)
         self.cam_status = QLabel("camera not connected")
+        self.cam_status.setObjectName("Muted")
         self.cam_status.setWordWrap(True)
         cam_lay.addRow(self.cam_status)
+        self.src_combo.currentIndexChanged.connect(self._source_changed)
+        self._source_changed()
 
         top.addWidget(ds_box, 1)
         top.addWidget(cam_box, 1)
@@ -165,13 +185,16 @@ class CapturePage(QWidget):
 
         # --- video + scenario
         mid = QHBoxLayout()
+        mid.setSpacing(12)
         self.view = FrameView()
         self.view.set_editable(False)
         mid.addWidget(self.view, 3)
 
         scen = QGroupBox("Capture scenario")
         scen_lay = QVBoxLayout(scen)
+        scen_lay.setSpacing(8)
         self.steps_list = QListWidget()
+        self.steps_list.setSpacing(2)
         self.steps_list.setMinimumHeight(190)
         for i, (name, _prompt, sec) in enumerate(STEPS):
             item = QListWidgetItem(f"{i + 1}. {name} — {sec:g} s")
@@ -182,8 +205,8 @@ class CapturePage(QWidget):
 
         self.prompt = QLabel("Select a step and click “Start step”.\n"
                              "Frames are saved automatically while the countdown runs.")
+        self.prompt.setObjectName("Prompt")
         self.prompt.setWordWrap(True)
-        self.prompt.setStyleSheet("font-weight: 600;")
         scen_lay.addWidget(self.prompt)
         self.progress = QProgressBar()
         self.progress.setRange(0, 100)
@@ -193,6 +216,7 @@ class CapturePage(QWidget):
         btn_row = QHBoxLayout()
         self.btn_start = QPushButton("Start step")
         self.btn_start.clicked.connect(self._start_step)
+        primary(self.btn_start)
         self.btn_skip = QPushButton("Skip")
         self.btn_skip.clicked.connect(self._skip_step)
         self.btn_snap = QPushButton("Snapshot")
@@ -203,6 +227,7 @@ class CapturePage(QWidget):
         scen_lay.addLayout(btn_row)
 
         self.capture_stats = QLabel("saved this session: 0 · skipped: 0")
+        self.capture_stats.setObjectName("Muted")
         self.capture_stats.setWordWrap(True)
         scen_lay.addWidget(self.capture_stats)
         scen_lay.addStretch(1)
@@ -319,6 +344,11 @@ class CapturePage(QWidget):
         self._run(task, done, "Import failed",
                   on_error=self.import_status.setText,
                   on_line=self.import_status.setText)
+
+    def _source_changed(self) -> None:
+        board = self.src_combo.currentData() == "board"
+        self.usb_row.setVisible(not board)
+        self.board_row.setVisible(board)
 
     def _update_dataset_ui(self) -> None:
         ds = self.dataset
@@ -513,7 +543,7 @@ class CapturePage(QWidget):
         if idx is not None:
             item = self.steps_list.item(idx)
             item.setText(f"✓ {idx + 1}. {STEPS[idx][0]} — {STEPS[idx][2]:g} s")
-            item.setForeground(QColor("#31d17c"))
+            item.setForeground(QColor("#15803d"))
             self._next_unfinished(select=True)
         self.progress.setValue(100)
         nxt = self.steps_list.currentRow()

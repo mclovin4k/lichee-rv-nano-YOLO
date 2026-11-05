@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..board import Board, BoardError
+from .theme import accent, primary
 from .widgets import LogPane, Worker
 
 
@@ -27,10 +28,13 @@ class BoardPage(QWidget):
 
     def _build_ui(self) -> None:
         root = QHBoxLayout(self)
+        root.setSpacing(12)
         left = QVBoxLayout()
+        left.setSpacing(10)
 
         conn = QGroupBox("Board")
         form = QFormLayout(conn)
+        form.setSpacing(8)
         self.ip = QLineEdit(str(self.cfg.get("board_ip")))
         form.addRow("IP:", self.ip)
         self.user = QLineEdit(str(self.cfg.get("board_user")))
@@ -48,25 +52,33 @@ class BoardPage(QWidget):
         row = QHBoxLayout()
         self.btn_check = QPushButton("Check connection")
         self.btn_check.clicked.connect(self._check)
+        accent(self.btn_check)
         row.addWidget(self.btn_check)
         btn_refresh = QPushButton("Refresh models")
         btn_refresh.clicked.connect(self._refresh_models)
         row.addWidget(btn_refresh)
         form.addRow(row)
         self.status = QLabel("click “Check connection”")
+        self.status.setObjectName("Muted")
         self.status.setWordWrap(True)
+        self.status.setAlignment(Qt.AlignmentFlag.AlignTop
+                                 | Qt.AlignmentFlag.AlignLeft)
         form.addRow(self.status)
         left.addWidget(conn)
 
         models = QGroupBox("Models on board")
         ml = QVBoxLayout(models)
+        ml.setSpacing(8)
         self.models = QListWidget()
-        self.models.setMinimumHeight(140)
+        self.models.setMinimumHeight(180)
+        self.models.setTextElideMode(Qt.TextElideMode.ElideMiddle)
+        self.models.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         ml.addWidget(self.models)
         hint = QLabel("start_stream.sh scans /root/models — an uploaded model "
                       "appears in the menu automatically.")
+        hint.setObjectName("Muted")
         hint.setWordWrap(True)
-        hint.setStyleSheet("color: #6b7280;")
         ml.addWidget(hint)
         row2 = QHBoxLayout()
         self.btn_run = QPushButton("Start selected")
@@ -78,36 +90,42 @@ class BoardPage(QWidget):
         ml.addLayout(row2)
         left.addWidget(models)
 
-        upload = QGroupBox("Upload model")
-        ul = QVBoxLayout(upload)
-        file_row = QHBoxLayout()
-        self.file_edit = QLineEdit()
-        self.file_edit.setPlaceholderText("path to .cvimodel")
-        file_row.addWidget(self.file_edit, 1)
-        btn_file = QPushButton("…")
-        btn_file.setFixedWidth(36)
-        btn_file.clicked.connect(self._pick_file)
-        file_row.addWidget(btn_file)
-        ul.addLayout(file_row)
-        name_row = QHBoxLayout()
-        name_row.addWidget(QLabel("name on board:"))
-        self.remote_name = QLineEdit()
-        name_row.addWidget(self.remote_name, 1)
-        ul.addLayout(name_row)
-        self.overwrite = QCheckBox("overwrite if it already exists")
-        ul.addWidget(self.overwrite)
-        self.btn_upload = QPushButton("Upload to board")
-        self.btn_upload.clicked.connect(self._upload)
-        ul.addWidget(self.btn_upload)
-        left.addWidget(upload)
         left.addStretch(1)
 
         left_w = QWidget()
         left_w.setLayout(left)
-        left_w.setFixedWidth(380)
+        left_w.setFixedWidth(460)
         root.addWidget(left_w)
 
         right = QVBoxLayout()
+        right.setSpacing(10)
+
+        upload = QGroupBox("Upload model")
+        uf = QFormLayout(upload)
+        uf.setSpacing(8)
+        file_row = QHBoxLayout()
+        file_row.setContentsMargins(0, 0, 0, 0)
+        self.file_edit = QLineEdit()
+        self.file_edit.setPlaceholderText("path to .cvimodel")
+        file_row.addWidget(self.file_edit, 1)
+        btn_file = QPushButton("…")
+        btn_file.setFixedWidth(40)
+        btn_file.clicked.connect(self._pick_file)
+        file_row.addWidget(btn_file)
+        uf.addRow("File:", file_row)
+        self.remote_name = QLineEdit()
+        uf.addRow("Name on board:", self.remote_name)
+        action_row = QHBoxLayout()
+        self.overwrite = QCheckBox("overwrite if it already exists")
+        action_row.addWidget(self.overwrite)
+        action_row.addStretch(1)
+        self.btn_upload = QPushButton("Upload to board")
+        self.btn_upload.clicked.connect(self._upload)
+        primary(self.btn_upload)
+        action_row.addWidget(self.btn_upload)
+        uf.addRow(action_row)
+        right.addWidget(upload)
+
         head = QHBoxLayout()
         head.addWidget(QLabel("Log"))
         head.addStretch(1)
@@ -140,6 +158,12 @@ class BoardPage(QWidget):
 
     # ---------- actions ----------
 
+    def _set_status(self, text: str) -> None:
+        self.status.setText(text)
+        lines = text.count("\n") + 1
+        self.status.setMinimumHeight(
+            self.status.fontMetrics().lineSpacing() * lines + 10)
+
     def _check(self) -> None:
         board = self._board()
 
@@ -161,7 +185,7 @@ class BoardPage(QWidget):
                 f"stream :{self.stream_port.value()}: {http} · "
                 f"capture :{self.cfg.get('capture_port')}: {cap}\n"
                 f"{info.get('uptime', '')}")
-        self.status.setText(text)
+        self._set_status(text)
         self.log.append_line(text)
 
     def _refresh_models(self) -> None:
@@ -178,9 +202,10 @@ class BoardPage(QWidget):
         self.models.clear()
         for n in names:
             self.models.addItem(n)
+            self.models.item(self.models.count() - 1).setToolTip(n)
             if n == keep:
                 self.models.setCurrentRow(self.models.count() - 1)
-        self.status.setText(f"models on board: {len(names)}")
+        self._set_status(f"models on board: {len(names)}")
         self.log.append_line("models: " + ", ".join(names))
 
     def _pick_file(self) -> None:
@@ -211,13 +236,14 @@ class BoardPage(QWidget):
         self.models.clear()
         for n in names:
             self.models.addItem(n)
+            self.models.item(self.models.count() - 1).setToolTip(n)
         target = Path(remote).name
         for i in range(self.models.count()):
             if self.models.item(i).text() == target:
                 self.models.setCurrentRow(i)
                 break
-        self.status.setText(f"uploaded: {remote}. The model will appear at the end of "
-                            "the start_stream.sh menu.")
+        self._set_status(f"uploaded: {remote}. The model will appear at the end of "
+                         "the start_stream.sh menu.")
 
     def _run_selected(self) -> None:
         item = self.models.currentItem()
@@ -248,9 +274,9 @@ class BoardPage(QWidget):
         if tail:
             self.log.append_line("--- stream.log ---\n" + tail)
         if ok:
-            self.status.setText(f"stream started: {self._board().stream_url()}")
+            self._set_status(f"stream started: {self._board().stream_url()}")
         else:
-            self.status.setText("model started, but the stream did not respond — check the log")
+            self._set_status("model started, but the stream did not respond — check the log")
 
     def _run_auto(self) -> None:
         board = self._board()
@@ -267,7 +293,7 @@ class BoardPage(QWidget):
         ok, tail = result
         if tail:
             self.log.append_line("--- stream.log ---\n" + tail)
-        self.status.setText("normal stream started" if ok else "stream did not respond")
+        self._set_status("normal stream started" if ok else "stream did not respond")
 
     # ---------- background ----------
 

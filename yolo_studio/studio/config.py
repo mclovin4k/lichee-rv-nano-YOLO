@@ -49,11 +49,18 @@ class Config:
         """Forget configured interpreters that are no longer on disk.
 
         An old settings file (or one copied from another machine) must not
-        stop the application from finding a working Python by itself.
+        stop the application from finding a working Python by itself. A
+        ``/home/...`` tpu-mlir path on Windows is a WSL path: Windows cannot
+        stat it, so it is kept and checked by pyenv.py instead.
         """
         for key in ("ultra_python", "tpu_python"):
             value = str(self.data.get(key) or "").strip()
-            if value and not Path(value).expanduser().is_file():
+            if not value:
+                continue
+            if os.name == "nt" and key == "tpu_python" and \
+                    value.startswith(("/", "~/")):
+                continue
+            if not Path(value).expanduser().is_file():
                 self.data[key] = ""
 
     def save(self) -> None:

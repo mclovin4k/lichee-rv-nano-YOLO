@@ -204,11 +204,12 @@ def main() -> int:
 
     from studio.config import Config  # noqa: E402
     from studio.ui.main_window import MainWindow  # noqa: E402
+    from studio.ui.theme import apply_theme  # noqa: E402
 
     app = QApplication(sys.argv)
     app.setApplicationName("Lichee YOLO Studio")
     app.setOrganizationName("lichee")
-    app.setStyle("Fusion")
+    apply_theme(app)
     window = MainWindow(Config())
     window.show()
     if smoke_test:

@@ -1,12 +1,13 @@
-# LicheeRV Nano: camera, NPU and face recognition
+# LicheeRV Nano (SG2002/CV181x): MJPEG, YOLO on the NPU, face recognition and a model studio
 
 [![build](https://github.com/mclovin4k/lichee-rv-nano-YOLO/actions/workflows/build.yml/badge.svg)](https://github.com/mclovin4k/lichee-rv-nano-YOLO/actions/workflows/build.yml)
 [![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-A working toolkit for the LicheeRV Nano (SG2002 / CV181x) with the GC4653
-camera: MJPEG streaming, YOLO detection on the NPU, face recognition, and a
-desktop tool for capturing datasets, labeling and building models. The
-repository contains three independent projects.
+A working toolkit for the LicheeRV Nano (SG2002 / CV181x, RISC-V) with the
+GC4653 camera: MJPEG streaming, YOLOv8/YOLO11 detection on the NPU, face
+recognition, and a desktop studio for importing datasets, labeling, training
+and exporting `.cvimodel` models. The repository contains three independent
+projects.
 
 The repository contains **its own code only**. Cvitek/Sophgo runtime
 libraries and `.cvimodel` models are not redistributed: they are proprietary
@@ -20,8 +21,32 @@ libraries from the board firmware and upload only the models you provide. See
 | [`yolo_face/`](yolo_face/README.md) | MJPEG + face detection/recognition (SCRFD + cviface) | `yolo_face/install.sh <IP>` → `start_face.sh start` |
 | [`yolo_studio/`](yolo_studio/README.md) | Desktop tool: dataset import/capture, labeling, training, `.cvimodel` export | download the Linux/Windows build from Releases |
 
-<img width="806" height="453" alt="coco (1)" src="https://github.com/user-attachments/assets/05e34ccf-80be-4021-815d-4fe90fc48b8d" />
-<img width="1632" height="695" alt="face (1)-crop (1)" src="https://github.com/user-attachments/assets/46709788-40a3-4df0-a8fe-4b74bdf402a3" />
+## Demo
+
+**Lichee YOLO Studio** — import a dataset, label frames, train on CPU and export
+a `.cvimodel` for the board:
+
+<p align="center">
+  <img src="docs/images/yolo-studio.png" width="1150"
+       alt="Lichee YOLO Studio label page with two drone bounding boxes">
+</p>
+
+**MJPEG stream** with NPU detection on the LicheeRV Nano:
+
+<p align="center">
+  <img width="1919" height="823" alt="LicheeRV Nano YOLO toolkit screenshot" src="https://github.com/user-attachments/assets/4044f4de-e4af-47e8-b3e9-9adbd29fef01" />
+</p>
+
+<!-- Demo GIFs: upload the recordings to docs/images/ and uncomment this block.
+     Suggested files: demo-capture.gif, demo-label.gif, demo-train.gif,
+     demo-board.gif.
+<p align="center">
+  <img src="docs/images/demo-capture.gif" width="900" alt="Capturing frames from the board camera">
+  <img src="docs/images/demo-label.gif" width="900" alt="Labeling frames and tracking boxes with optical flow">
+  <img src="docs/images/demo-train.gif" width="900" alt="Preparing a dataset, training and building a cvimodel">
+  <img src="docs/images/demo-board.gif" width="900" alt="Uploading a cvimodel and starting the NPU stream">
+</p>
+-->
 
 `yolo_stream` and `yolo_face` share the camera and port 7777, so starting one
 stops the other. No autostart is installed: after boot you choose the mode

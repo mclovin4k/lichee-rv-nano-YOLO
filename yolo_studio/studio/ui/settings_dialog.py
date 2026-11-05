@@ -6,7 +6,7 @@ from pathlib import Path
 
 from PySide6.QtWidgets import (
     QDialog, QDialogButtonBox, QFileDialog, QFormLayout, QHBoxLayout,
-    QLineEdit, QMessageBox, QPushButton, QSpinBox, QWidget,
+    QLabel, QLineEdit, QMessageBox, QPushButton, QSpinBox, QWidget,
 )
 
 from .. import pyenv
@@ -18,8 +18,10 @@ class SettingsDialog(QDialog):
         super().__init__(parent)
         self.cfg = cfg
         self.setWindowTitle("Settings")
-        self.setMinimumWidth(620)
+        self.setMinimumWidth(640)
         form = QFormLayout(self)
+        form.setSpacing(10)
+        form.setContentsMargins(18, 18, 18, 18)
 
         self.ip = QLineEdit(str(cfg.get("board_ip")))
         form.addRow("Board IP:", self.ip)
@@ -56,23 +58,34 @@ class SettingsDialog(QDialog):
                   file_mode: bool, detect_kind: str = "") -> QLineEdit:
         row = QHBoxLayout()
         edit = QLineEdit(str(self.cfg.get(key)))
+        wsl_tpu = detect_kind == "tpu" and pyenv.is_win()
         if detect_kind and pyenv.bundled(detect_kind):
             edit.setPlaceholderText("bundled in this build")
             edit.setToolTip("This build already contains the package; the "
                             "field can stay empty.")
+        elif wsl_tpu:
+            edit.setPlaceholderText(
+                "/home/<user>/.venvs/tpu310/bin/python (WSL)")
+            edit.setToolTip("tpu-mlir runs inside WSL 2. Enter the Linux path "
+                            "to its interpreter, or click Detect.")
         elif detect_kind:
             edit.setPlaceholderText("detected automatically")
         row.addWidget(edit, 1)
-        btn = QPushButton("…")
-        btn.setFixedWidth(36)
-        row.addWidget(btn)
+        if not wsl_tpu:
+            btn = QPushButton("…")
+            btn.setFixedWidth(40)
+            row.addWidget(btn)
         if detect_kind:
             detect = QPushButton("Detect")
-            detect.setToolTip("Search for an interpreter that has the package")
+            detect.setToolTip(
+                "Search inside the default WSL distribution for an "
+                "interpreter that has tpu-mlir" if wsl_tpu else
+                "Search for an interpreter that has the package")
             row.addWidget(detect)
 
             def run_detect() -> None:
-                exe = pyenv.detect(detect_kind, edit.text().strip())
+                exe = pyenv.detect(detect_kind, edit.text().strip(),
+                                   force=True)
                 if exe is None:
                     QMessageBox.information(self, "Not found",
                                             pyenv.missing_help(detect_kind))
@@ -81,16 +94,24 @@ class SettingsDialog(QDialog):
 
             detect.clicked.connect(run_detect)
         form.addRow(title, row)
+        if wsl_tpu:
+            hint = QLabel("Used inside WSL 2. The Windows file picker cannot "
+                          "browse Linux paths — click Detect or type the path.")
+            hint.setWordWrap(True)
+            form.addRow("", hint)
 
-        def browse() -> None:
-            if file_mode:
-                path, _ = QFileDialog.getOpenFileName(self, title, edit.text())
-            else:
-                path = QFileDialog.getExistingDirectory(self, title, edit.text())
-            if path:
-                edit.setText(path)
+        if not wsl_tpu:
+            def browse() -> None:
+                if file_mode:
+                    path, _ = QFileDialog.getOpenFileName(self, title,
+                                                          edit.text())
+                else:
+                    path = QFileDialog.getExistingDirectory(self, title,
+                                                            edit.text())
+                if path:
+                    edit.setText(path)
 
-        btn.clicked.connect(browse)
+            btn.clicked.connect(browse)
         return edit
 
     def _accept(self) -> None:

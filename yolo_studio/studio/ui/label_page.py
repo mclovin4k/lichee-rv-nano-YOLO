@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
 
 from ..dataset import Box, Dataset, imread
 from ..tracking import track_boxes
+from .theme import accent, danger, primary
 from .widgets import FrameView
 
 
@@ -42,19 +43,23 @@ class LabelPage(QWidget):
 
     def _build_ui(self) -> None:
         root = QHBoxLayout(self)
+        root.setSpacing(12)
 
         left = QVBoxLayout()
+        left.setSpacing(8)
         left.addWidget(QLabel("Frames (✓ — labeled)"))
         self.list = QListWidget()
         self.list.setMinimumWidth(230)
         self.list.currentRowChanged.connect(self._row_changed)
         left.addWidget(self.list, 1)
         self.stats = QLabel("")
+        self.stats.setObjectName("Muted")
         self.stats.setWordWrap(True)
         left.addWidget(self.stats)
         root.addLayout(left)
 
         center = QVBoxLayout()
+        center.setSpacing(8)
         self.view = FrameView()
         self.view.set_editable(True)
         self.view.box_added.connect(self._box_added)
@@ -71,13 +76,16 @@ class LabelPage(QWidget):
         nav.addWidget(btn_next)
         nav.addStretch(1)
         self.hint = QLabel("Draw a box with the mouse. Delete removes the selected one.")
+        self.hint.setObjectName("Muted")
         nav.addWidget(self.hint)
         center.addLayout(nav)
         root.addLayout(center, 1)
 
         right = QVBoxLayout()
+        right.setSpacing(10)
         box = QGroupBox("Labeling")
         bl = QVBoxLayout(box)
+        bl.setSpacing(8)
         bl.addWidget(QLabel("Box class:"))
         self.cls_combo = QComboBox()
         self.cls_combo.setToolTip(
@@ -86,16 +94,19 @@ class LabelPage(QWidget):
         self.cls_combo.currentIndexChanged.connect(self._class_changed)
         bl.addWidget(self.cls_combo)
         self.cls_label = QLabel("")
+        self.cls_label.setObjectName("Muted")
         bl.addWidget(self.cls_label)
 
         self.btn_save = QPushButton("Save boxes")
         self.btn_save.clicked.connect(self._save_current)
+        primary(self.btn_save)
         bl.addWidget(self.btn_save)
 
         self.btn_track = QPushButton("Track forward →")
         self.btn_track.setToolTip(
             "Propagate boxes to the following frames using optical flow and save")
         self.btn_track.clicked.connect(self._track_forward)
+        accent(self.btn_track)
         bl.addWidget(self.btn_track)
 
         self.btn_clear = QPushButton("Clear boxes")
@@ -104,10 +115,12 @@ class LabelPage(QWidget):
 
         self.btn_delete = QPushButton("Delete frame")
         self.btn_delete.clicked.connect(self._delete_image)
+        danger(self.btn_delete)
         bl.addWidget(self.btn_delete)
 
         bl.addStretch(1)
         self.box_info = QLabel("boxes: 0")
+        self.box_info.setObjectName("Muted")
         bl.addWidget(self.box_info)
         right.addWidget(box)
         root.addLayout(right)
@@ -130,7 +143,7 @@ class LabelPage(QWidget):
                 (f" · {count}" if count else ""))
             item.setData(Qt.ItemDataRole.UserRole, str(img))
             if labeled:
-                item.setForeground(QColor("#31d17c"))
+                item.setForeground(QColor("#15803d"))
             self.list.addItem(item)
 
         row = -1
@@ -150,7 +163,7 @@ class LabelPage(QWidget):
             if item is not None:
                 item.setText(f"✓ {old_img.name} · {len(self._boxes)}"
                              if self._boxes else f"✓ {old_img.name}")
-                item.setForeground(QColor("#31d17c"))
+                item.setForeground(QColor("#15803d"))
         elif row >= 0:
             self._current_row = row
             self._load_image(self._images[row])
@@ -255,7 +268,7 @@ class LabelPage(QWidget):
         self.view.set_boxes(self._boxes, self._class_names())
         self.view.set_new_class(self.cls_combo.currentIndex())
         self.hint.setText(f"{img.name} · {iw}×{ih} · "
-                          "draw a box with the mouse, Delete removes it")
+                          "draw a box · Delete removes it")
         self._update_stats()
 
     def _prev_image(self) -> None:
@@ -309,7 +322,7 @@ class LabelPage(QWidget):
             if item is not None:
                 item.setText(f"✓ {img.name} · {len(self._boxes)}"
                              if self._boxes else f"✓ {img.name}")
-                item.setForeground(QColor("#31d17c"))
+                item.setForeground(QColor("#15803d"))
         if not silent:
             self.hint.setText("labels saved")
         self._update_stats()

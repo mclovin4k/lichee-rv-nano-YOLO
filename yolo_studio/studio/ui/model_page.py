@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
 
 from .. import pipeline, pyenv
 from ..dataset import Dataset
+from .theme import accent, danger, primary
 from .widgets import LogPane, Worker
 
 
@@ -38,9 +39,11 @@ class ModelPage(QWidget):
         top = QHBoxLayout()
 
         left = QVBoxLayout()
+        left.setSpacing(10)
 
         ds_box = QGroupBox("1. Dataset")
         dl = QVBoxLayout(ds_box)
+        dl.setSpacing(8)
         self.ds_info = QLabel("no dataset selected")
         self.ds_info.setWordWrap(True)
         self.ds_info.setMinimumHeight(38)
@@ -62,24 +65,30 @@ class ModelPage(QWidget):
         dl.addLayout(cls_row)
         self.btn_split = QPushButton("Prepare dataset (train/val + calibration)")
         self.btn_split.clicked.connect(self._prepare_split)
+        primary(self.btn_split)
         dl.addWidget(self.btn_split)
         self.split_info = QLabel("")
+        self.split_info.setObjectName("Muted")
         self.split_info.setWordWrap(True)
         dl.addWidget(self.split_info)
         left.addWidget(ds_box)
 
         pt_box = QGroupBox("2. Weights")
         pl = QVBoxLayout(pt_box)
+        pl.setSpacing(8)
         self.pt_info = QLabel("weights: none")
+        self.pt_info.setObjectName("Muted")
         self.pt_info.setWordWrap(True)
         pl.addWidget(self.pt_info)
         self.btn_import = QPushButton("Import ready .pt…")
         self.btn_import.clicked.connect(self._import_pt)
+        accent(self.btn_import)
         pl.addWidget(self.btn_import)
         left.addWidget(pt_box)
 
         train_box = QGroupBox("3. Training")
         tl = QFormLayout(train_box)
+        tl.setSpacing(8)
         self.epochs = QSpinBox()
         self.epochs.setRange(1, 1000)
         self.epochs.setValue(60)
@@ -97,22 +106,26 @@ class ModelPage(QWidget):
         tl.addRow("base:", self.base_model)
         self.btn_train = QPushButton("Train on CPU")
         self.btn_train.clicked.connect(self._train)
+        primary(self.btn_train)
         tl.addWidget(self.btn_train)
         warn = QLabel("CPU training is slow: for initial experiments, a small "
                       "dataset and imgsz 416–640 are enough.\n"
                       "Base model: yolo11n.pt (requires internet or a local "
                       "file) or yolo11n.yaml — train from scratch without downloading.")
+        warn.setObjectName("Warning")
         warn.setWordWrap(True)
-        warn.setStyleSheet("color: #b45309;")
         tl.addWidget(warn)
         left.addWidget(train_box)
 
         exp_box = QGroupBox("4. Export and conversion")
         el = QVBoxLayout(exp_box)
+        el.setSpacing(8)
         self.btn_onnx = QPushButton("Export ONNX (6 outputs)")
         self.btn_onnx.clicked.connect(self._export_onnx)
+        accent(self.btn_onnx)
         el.addWidget(self.btn_onnx)
         self.onnx_info = QLabel("ONNX: none")
+        self.onnx_info.setObjectName("Muted")
         self.onnx_info.setWordWrap(True)
         el.addWidget(self.onnx_info)
         name_row = QVBoxLayout()
@@ -122,8 +135,10 @@ class ModelPage(QWidget):
         el.addLayout(name_row)
         self.btn_cvimodel = QPushButton("Build cvimodel")
         self.btn_cvimodel.clicked.connect(self._build_cvimodel)
+        primary(self.btn_cvimodel)
         el.addWidget(self.btn_cvimodel)
         self.cv_info = QLabel("cvimodel: none")
+        self.cv_info.setObjectName("Muted")
         self.cv_info.setWordWrap(True)
         el.addWidget(self.cv_info)
         left.addWidget(exp_box)
@@ -135,17 +150,19 @@ class ModelPage(QWidget):
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        scroll.setFixedWidth(402)
+        scroll.setFixedWidth(424)
         scroll.setWidget(left_w)
         top.addWidget(scroll)
 
         right = QVBoxLayout()
+        right.setSpacing(8)
         log_head = QHBoxLayout()
         log_head.addWidget(QLabel("Build log"))
         log_head.addStretch(1)
         self.btn_cancel = QPushButton("Cancel")
         self.btn_cancel.setEnabled(False)
         self.btn_cancel.clicked.connect(self._cancel)
+        danger(self.btn_cancel)
         log_head.addWidget(self.btn_cancel)
         btn_clear = QPushButton("Clear")
         btn_clear.clicked.connect(lambda: self.log.clear())
@@ -411,16 +428,20 @@ class ModelPage(QWidget):
 
     def _python_missing(self, kind: str) -> None:
         info = pyenv.KINDS[kind]
+        wsl_tpu = kind == "tpu" and pyenv.is_win()
         box = QMessageBox(self)
         box.setIcon(QMessageBox.Icon.Critical)
         box.setWindowTitle("Python not found")
         box.setText(f"No Python environment with {info['install']} was found, "
                     f"so {info['purpose']} cannot run.")
         box.setInformativeText(pyenv.missing_help(kind))
-        locate = box.addButton("Locate interpreter…",
-                               QMessageBox.ButtonRole.ActionRole)
-        create = box.addButton("Create environment…",
-                               QMessageBox.ButtonRole.ActionRole)
+        locate = None
+        if not wsl_tpu:
+            locate = box.addButton("Locate interpreter…",
+                                   QMessageBox.ButtonRole.ActionRole)
+        create = box.addButton(
+            "Create WSL environment…" if wsl_tpu else "Create environment…",
+            QMessageBox.ButtonRole.ActionRole)
         search = box.addButton("Search again",
                                QMessageBox.ButtonRole.ActionRole)
         box.addButton(QMessageBox.StandardButton.Cancel)
@@ -428,18 +449,26 @@ class ModelPage(QWidget):
         clicked = box.clickedButton()
         if clicked is create:
             target = pyenv.venv_target(kind)
-            if QMessageBox.question(
-                    self, "Create environment",
+            if wsl_tpu:
+                question = (
+                    f"Create {target} in the default WSL 2 distribution and "
+                    f"install {info['install']} into it?\n\n"
+                    "WSL 2 must already be installed: if it is not, cancel "
+                    "and run \"wsl --install\" in PowerShell first.\n\n"
+                    "The download can take several minutes.")
+            else:
+                question = (
                     f"Create {target} and install {info['install']} into it?\n\n"
                     "About 400 MB will be downloaded once; PyTorch is large "
-                    "and the installation can take several minutes.") \
+                    "and the installation can take several minutes.")
+            if QMessageBox.question(self, "Create environment", question) \
                     != QMessageBox.StandardButton.Yes:
                 return
             self.log.append_line(f"creating {target}…")
             self._run(pyenv.create_env, kind,
                       on_done=lambda path: self._env_created(kind, path))
             return
-        if clicked is locate:
+        if locate is not None and clicked is locate:
             path, _ = QFileDialog.getOpenFileName(
                 self, info["label"], str(Path.home()))
             if not path:
@@ -449,7 +478,7 @@ class ModelPage(QWidget):
             self.log.append_line(f"{info['label']}: {path}")
         elif clicked is search:
             self.log.append_line(f"searching for {info['install']}…")
-            exe = pyenv.detect(kind)
+            exe = pyenv.detect(kind, force=True)
             if exe is None:
                 self.log.append_line(f"{info['install']} was not found")
                 return

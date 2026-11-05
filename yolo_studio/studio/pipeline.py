@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import shlex
 import shutil
 import subprocess
 import threading
@@ -26,10 +27,13 @@ def run_stream(cmd: list[str], cwd: str | Path | None = None,
                cancel: threading.Event | None = None,
                timeout: float | None = None) -> int:
     """Runs a command, passing output lines to on_line."""
+    kwargs: dict = {}
+    if pyenv.is_win():
+        kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
     proc = subprocess.Popen(
         [str(c) for c in cmd], cwd=str(cwd) if cwd else None, env=env,
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-        text=True, bufsize=1)
+        text=True, encoding="utf-8", errors="replace", bufsize=1, **kwargs)
     rc = -1
     try:
         assert proc.stdout is not None
@@ -126,6 +130,78 @@ def count_calib(calib_dir: str | Path) -> int:
     return sum(1 for p in d.iterdir() if p.suffix.lower() in exts)
 
 
+def _wsl_path(exe: str, path: str | Path) -> str:
+    """Translate a Windows path with ``wslpath``; Linux paths pass through."""
+    text = str(path)
+    if text.startswith("/"):
+        return text
+    kwargs: dict = {}
+    if pyenv.is_win():
+        kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    try:
+        result = subprocess.run(
+            [exe, "-e", "wslpath", "-a", text],
+            capture_output=True, text=True, encoding="utf-8",
+            errors="replace", check=False, **kwargs)
+    except OSError as exc:
+        raise PipelineError(f"cannot run wsl.exe: {exc}") from exc
+    if result.returncode != 0 or not result.stdout.strip():
+        detail = (result.stderr or result.stdout).strip()
+        raise PipelineError(
+            "WSL could not translate a Windows path to Linux:\n"
+            f"  {text}\n{detail}".rstrip())
+    return result.stdout.strip().splitlines()[-1]
+
+
+def _wsl_cvimodel_argv(script: Path, onnx: Path, calib: Path,
+                       sample_image: Path | None, work: Path, tpu_python: str,
+                       out_name: str, imgsz: int, calib_num: int) -> list[str]:
+    """The conversion command, run by /bin/sh inside the default WSL distro."""
+    exe = pyenv.wsl_exe()
+    if exe is None:
+        raise PipelineError(
+            "WSL 2 was not found. Install it from an administrator PowerShell:\n"
+            "  wsl --install\n"
+            "Reboot if asked, open the Ubuntu terminal once, then click Build "
+            "cvimodel again and choose \"Create WSL environment…\".\n"
+            "The ONNX file produced here can also be converted on a Linux "
+            "host or on the board itself.")
+    tpu = str(tpu_python).strip()
+    if not tpu.startswith("/"):
+        raise PipelineError(
+            "On Windows the tpu-mlir interpreter must be a Linux path inside "
+            "WSL, for example:\n"
+            "  /home/<user>/.venvs/tpu310/bin/python\n"
+            f"The configured value is:\n  {tpu}")
+
+    translated = {
+        "script": _wsl_path(exe, script),
+        "onnx": _wsl_path(exe, onnx),
+        "calib": _wsl_path(exe, calib),
+        "work": _wsl_path(exe, work),
+    }
+    if sample_image is not None:
+        translated["sample"] = _wsl_path(exe, sample_image)
+
+    assignments = " ".join([
+        "TPU_PY=" + shlex.quote(tpu),
+        "NAME=" + shlex.quote("model"),
+        "OUT=" + shlex.quote(out_name),
+        "CALIB_NUM=" + shlex.quote(str(calib_num)),
+        "IMGSZ=" + shlex.quote(str(imgsz)),
+    ])
+    inner = (
+        "cd " + shlex.quote(translated["work"]) + " && "
+        "export " + assignments + " && "
+        "exec /bin/sh " + shlex.quote(translated["script"])
+        + " " + shlex.quote(translated["onnx"])
+        + " " + shlex.quote(translated["calib"])
+    )
+    if "sample" in translated:
+        inner += " " + shlex.quote(translated["sample"])
+    return [exe, "-e", "sh", "-c", inner]
+
+
 def build_cvimodel(onnx: str | Path, calib_dir: str | Path,
                    out_name: str, tpu_python: str, work_dir: str | Path,
                    sample_image: str | Path | None = None,
@@ -142,14 +218,6 @@ def build_cvimodel(onnx: str | Path, calib_dir: str | Path,
     script = TOOLS / "build_cvimodel.sh"
     if not script.is_file():
         raise PipelineError(f"script not found: {script}")
-    shell = shutil.which("sh")
-    if shell is None:
-        raise PipelineError(
-            "cvimodel conversion needs a POSIX shell and tpu-mlir, which only "
-            "run on Linux.\nOn Windows use WSL: install tpu-mlir in a WSL "
-            "environment and set Settings → \"Python tpu-mlir\" to its "
-            "interpreter (for example /home/<user>/.venvs/tpu310/bin/python).\n"
-            "The ONNX file produced here can be converted on any Linux host.")
 
     work = Path(work_dir)
     work.mkdir(parents=True, exist_ok=True)
@@ -157,17 +225,30 @@ def build_cvimodel(onnx: str | Path, calib_dir: str | Path,
         sample_image = next((p for p in sorted(calib.iterdir())
                              if p.suffix.lower() in {".jpg", ".jpeg", ".png", ".bmp"}),
                             None)
-    env = os.environ.copy()
-    env["TPU_PY"] = tpu_python
-    env["NAME"] = "model"
-    env["OUT"] = out_name
-    env["CALIB_NUM"] = str(min(200, n_calib))
-    env["IMGSZ"] = str(int(imgsz))
-    env["PATH"] = str(Path(tpu_python).parent) + os.pathsep + env.get("PATH", "")
+    n_calib = min(200, n_calib)
 
-    cmd = [shell, str(script), str(onnx), str(calib)]
-    if sample_image is not None:
-        cmd.append(str(sample_image))
+    if pyenv.is_win():
+        cmd = _wsl_cvimodel_argv(script, onnx, calib,
+                                 Path(sample_image) if sample_image else None,
+                                 work, tpu_python, out_name, int(imgsz), n_calib)
+        env = None
+    else:
+        shell = shutil.which("sh")
+        if shell is None:
+            raise PipelineError(
+                "cvimodel conversion needs a POSIX shell and tpu-mlir. "
+                "Install a POSIX shell or run the conversion on a Linux host.")
+        env = os.environ.copy()
+        env["TPU_PY"] = tpu_python
+        env["NAME"] = "model"
+        env["OUT"] = out_name
+        env["CALIB_NUM"] = str(n_calib)
+        env["IMGSZ"] = str(int(imgsz))
+        env["PATH"] = str(Path(tpu_python).parent) + os.pathsep + env.get("PATH", "")
+        cmd = [shell, str(script), str(onnx), str(calib)]
+        if sample_image is not None:
+            cmd.append(str(sample_image))
+
     run_stream(cmd, cwd=work, env=env, on_line=on_line, cancel=cancel)
 
     built = work / out_name

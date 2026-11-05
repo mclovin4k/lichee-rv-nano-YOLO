@@ -1,0 +1,3 @@
+# Shell scripts run on Linux, on the board and inside WSL: keep LF on every
+# checkout, including Windows builds of Lichee YOLO Studio.
+*.sh text eol=lf

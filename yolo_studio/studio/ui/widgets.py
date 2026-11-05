@@ -8,7 +8,9 @@ from typing import Callable
 import cv2
 import numpy as np
 from PySide6.QtCore import QRectF, Qt, QThread, Signal
-from PySide6.QtGui import QColor, QFont, QImage, QPainter, QPen
+from PySide6.QtGui import (
+    QColor, QFont, QFontDatabase, QImage, QPainter, QPainterPath, QPen,
+)
 from PySide6.QtWidgets import QPlainTextEdit, QWidget
 
 from ..dataset import Box
@@ -131,15 +133,37 @@ class FrameView(QWidget):
 
     def paintEvent(self, _event) -> None:
         painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
-        painter.fillRect(self.rect(), QColor("#0d0f12"))
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        painter.fillRect(self.rect(), QColor("#0b1220"))
         if self._image is None:
-            painter.setPen(QColor("#6b7280"))
-            painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter,
-                             "no frame — connect the camera")
+            frame = self.rect().adjusted(22, 22, -22, -22)
+            painter.setPen(QPen(QColor("#334155"), 1, Qt.PenStyle.DashLine))
+            painter.drawRoundedRect(frame, 12, 12)
+            font = QFont(painter.font())
+            font.setPointSizeF(11.0)
+            font.setWeight(QFont.Weight.DemiBold)
+            painter.setFont(font)
+            painter.setPen(QColor("#cbd5e1"))
+            painter.drawText(frame.adjusted(0, 0, 0, -18),
+                             Qt.AlignmentFlag.AlignCenter, "No frame yet")
+            font.setPointSizeF(9.0)
+            font.setWeight(QFont.Weight.Normal)
+            painter.setFont(font)
+            painter.setPen(QColor("#64748b"))
+            painter.drawText(frame.adjusted(0, 26, 0, 0),
+                             Qt.AlignmentFlag.AlignCenter,
+                             "Connect the board camera to preview and capture")
             return
         x, y, w, h, scale = self._fit()
+        path = QPainterPath()
+        path.addRoundedRect(QRectF(x, y, w, h), 10, 10)
+        painter.save()
+        painter.setClipPath(path)
+        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
         painter.drawImage(QRectF(x, y, w, h), self._image)
+        painter.restore()
+        painter.setPen(QPen(QColor("#1e293b"), 1))
+        painter.drawRoundedRect(QRectF(x, y, w, h), 10, 10)
 
         for i, b in enumerate(self._boxes):
             rect = QRectF(x + b.x * scale, y + b.y * scale,
@@ -153,7 +177,10 @@ class FrameView(QWidget):
                 label = f"class {b.cls}"
             if b.conf is not None:
                 label += f" {b.conf:.2f}"
-            painter.setFont(QFont("Sans", 9, QFont.Weight.Bold))
+            font = QFont(painter.font())
+            font.setPointSizeF(9.5)
+            font.setWeight(QFont.Weight.DemiBold)
+            painter.setFont(font)
             ty = rect.top() - 4
             if ty < 12:
                 ty = rect.bottom() + 14
@@ -259,8 +286,13 @@ class Worker(QThread):
 class LogPane(QPlainTextEdit):
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
+        self.setObjectName("LogPane")
         self.setReadOnly(True)
         self.setMaximumBlockCount(4000)
+        self.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
+        font = QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont)
+        font.setPointSizeF(9.0)
+        self.setFont(font)
         self.setPlaceholderText("build log…")
 
     def append_line(self, text: str) -> None:

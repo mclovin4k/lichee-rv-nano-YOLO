@@ -13,6 +13,11 @@ a custom YOLO model for the **LicheeRV Nano (cv181x)**:
 5. **Integration** — upload the model to the board over SSH into
    `/root/models/` and append it to the `start_stream.sh` menu.
 
+<p align="center">
+  <img src="../docs/images/yolo-studio.png" width="1100"
+       alt="Lichee YOLO Studio label page with drone bounding boxes">
+</p>
+
 ## Ready-to-run builds
 
 The easiest option is a release build from
@@ -101,7 +106,8 @@ choose **More info → Run anyway**.
 - for training: the `-full` build, or a separate environment with
   `ultralytics` + `torch` (CPU);
 - for conversion: a `tpu-mlir` environment (Python 3.10) — the
-  `tools/build_cvimodel.sh` script and the `TPU_PY` variable.
+  `tools/build_cvimodel.sh` script and the `TPU_PY` variable. On Windows the
+  environment lives inside WSL 2; the Studio creates and runs it there.
 
 **Board:**
 
@@ -155,8 +161,29 @@ py -3 -m venv %USERPROFILE%\.venvs\ultra
 %USERPROFILE%\.venvs\ultra\Scripts\python -m pip install ultralytics
 ```
 
-`tpu-mlir` is Linux-only, so cvimodel conversion runs on Linux (or in WSL on
-Windows); the ONNX step works everywhere.
+```sh
+# tpu-mlir (cvimodel conversion) — Linux, Python 3.10
+python3.10 -m venv ~/.venvs/tpu310
+~/.venvs/tpu310/bin/python -m pip install tpu-mlir
+```
+
+`tpu-mlir` is Linux-only. On Linux, create the environment as shown above and
+leave the field empty (Detect will find it) or point it at
+`~/.venvs/tpu310/bin/python`. On Windows, cvimodel conversion runs inside
+**WSL 2**:
+
+1. install WSL 2 once from an administrator PowerShell with `wsl --install`,
+   reboot if asked and finish the Ubuntu first-run setup;
+2. click **Build cvimodel**: the “Python not found” dialog offers
+   **Create WSL environment…**, which installs tpu-mlir into
+   `~/.venvs/tpu310` inside WSL. If the environment already exists,
+   **Detect** in Settings finds it;
+3. the field stores the Linux path, for example
+   `/home/<user>/.venvs/tpu310/bin/python`.
+
+The Studio calls `wsl.exe` for the conversion and translates the ONNX,
+calibration and output paths with `wslpath`, so the dataset and the resulting
+`.cvimodel` stay on the Windows drive. The ONNX step itself works everywhere.
 
 ## Quick start
 
@@ -318,8 +345,9 @@ The full bundle is a folder because a 1 GB one-file executable would unpack
 itself into a temporary directory on every start. The frozen application runs
 training and the ONNX export through its own hidden modes
 (`--yolo-cli`, `--export-onnx`), so no external Python is involved.
-Conversion to cvimodel still needs Linux/WSL: `tpu-mlir` does not exist for
-Windows.
+Conversion to cvimodel still needs Linux: `tpu-mlir` does not exist for
+Windows, so the Studio runs it inside WSL 2. The release build includes
+`tools/build_cvimodel.sh` and needs nothing else for that step.
 
 On Linux, install the xcb development/runtime packages listed above first; the
 script copies those libraries into the bundle. The build script also adds
@@ -343,8 +371,21 @@ environment as shown in *Running from source* and point the field at
 `…/bin/python` (`…\Scripts\python.exe` on Windows). The error dialog also
 offers **Locate interpreter…** and **Search again**.
 
-**“cvimodel conversion needs a POSIX shell”** — `tpu-mlir` only runs on Linux.
-Convert on a Linux host or in WSL; the exported ONNX is portable.
+**“WSL 2 was not found”** — install it from an administrator PowerShell with
+`wsl --install`, reboot if asked and finish the Ubuntu first-run setup. Then
+open **Settings → Python tpu-mlir** and press **Detect**, or click **Build
+cvimodel** and choose **Create WSL environment…**. The exported ONNX is
+portable and can also be converted on a Linux host or on the board itself.
+
+**“Python virtualenv support is missing inside WSL”** — in the Ubuntu terminal
+run `sudo apt update && sudo apt install python3-venv python3-pip` (use
+`python3.10-venv` if your distro has Python 3.10), then press **Create WSL
+environment…** again.
+
+**“The tpu-mlir interpreter must be a Linux path”** — on Windows the
+interpreter must be the Linux path of the environment inside WSL, for example
+`/home/<user>/.venvs/tpu310/bin/python`. The Windows file picker cannot browse
+WSL; press **Detect** or type the path.
 
 **The window does not open on Linux** — the Qt/X11 libraries listed in
 *Ready-to-run builds* are missing; the launcher prints the exact package names.
