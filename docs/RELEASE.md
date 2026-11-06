@@ -16,8 +16,10 @@ What a release contains, how it is produced and how to verify it.
 GitHub computes and displays a SHA-256 digest for every asset, so no separate
 checksum files are uploaded.
 
-No vendor library and no model is part of any asset. `install.sh` copies the
-libraries from the board firmware and uploads models from `MODELS_DIR`; see
+No vendor library and no model is part of any asset. `install.sh` keeps the
+libraries already on the board, restores missing ones from local copies or the
+pinned upstream SDK, and uploads models from `MODELS_DIR`/`vendor/models`
+without deleting existing files; see
 [`THIRD_PARTY_NOTICES.md`](../THIRD_PARTY_NOTICES.md).
 
 ## How the assets are built

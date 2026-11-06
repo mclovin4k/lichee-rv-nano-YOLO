@@ -11,8 +11,9 @@ projects.
 
 The repository contains **its own code only**. Cvitek/Sophgo runtime
 libraries and `.cvimodel` models are not redistributed: they are proprietary
-(or AGPL, in the case of Ultralytics derivatives), so the installers take the
-libraries from the board firmware and upload only the models you provide. See
+(or AGPL, in the case of Ultralytics derivatives), so the installers keep the
+board copies, restore missing libraries from local files or the pinned upstream
+SDK, and upload only the models you provide. See
 [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
 
 | Project | What it is | Quick start |
@@ -101,11 +102,13 @@ PAYLOAD_DIR=/path/to/unpacked-package ./install.sh <IP>
 ```
 
 The installer stops an old stream/face process, copies the package to
-`/root/yolo_stream` or `/root/yolo_face`, verifies the checksums, copies the
-vendor libraries from `/mnt/system/lib`, `/mnt/system/usr/lib` and
-`/mnt/system/usr/lib/3rd` into `$DEST/runtime`, uploads every `.cvimodel` and
-`.names` file found under `MODELS_DIR` (or `vendor/models`), and leaves the
-camera configuration alone.
+`/root/yolo_stream` or `/root/yolo_face` while keeping the existing `runtime/`
+and model directories, verifies the checksums, and restores the vendor
+libraries: copies already on the board are kept, local copies from the package
+or `VENDOR_DIR` are uploaded, and anything still missing is downloaded from the
+pinned Cvitek TDL SDK. Models are uploaded from `MODELS_DIR`, `vendor/models` or
+the local package; the models already on the board are never deleted. Installation
+does not touch the camera configuration.
 
 ### Lichee YOLO Studio
 
@@ -123,9 +126,10 @@ Both Studio variants need no Python and no installer:
 On Windows, `tpu-mlir` runs inside **WSL 2**: the Studio creates the
 environment there, calls `wsl.exe` for the `.cvimodel` step and translates the
 paths automatically. Install WSL 2 once with `wsl --install` if it is not
-present; after that no Python, `tpu-mlir`, `sudo` or `apt` setup is required —
-the Studio downloads a private Python 3.10 with `uv` when the distribution does
-not have one. The ONNX file itself is portable.
+present; after that no Python, `tpu-mlir`, `sudo`, `apt` or C compiler setup is
+required — the Studio downloads a private Python 3.10 with `uv` when the
+distribution does not have one and installs `tpu-mlir` plus a CPU-only `torch`
+from binary wheels. The ONNX file itself is portable.
 
 The Qt X11 library `libxcb-cursor.so.0` is bundled in the Linux builds. The
 OpenGL/EGL stack comes from the system (`libegl1`, `libgl1`, `libxkbcommon0`,

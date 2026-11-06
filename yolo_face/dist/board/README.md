@@ -5,9 +5,11 @@ Contents of the release package: `face_stream`, `run_face.sh`,
 
 The package deliberately contains **no vendor libraries and no models**: the
 Cvitek/Sophgo runtime is proprietary and the face models come from the TDL SDK
-without a stated license, so neither is redistributed. `install.sh` copies the
-libraries from the firmware of your board and uploads the models you choose.
-See `THIRD_PARTY_NOTICES.md` in the repository.
+without a stated license, so neither is redistributed. `install.sh` keeps the
+libraries already on the board, uploads local copies when available, downloads
+anything still missing from the pinned upstream SDK, and uploads the models you
+choose without deleting the existing ones. See `THIRD_PARTY_NOTICES.md` in the
+repository.
 
 ## Installation
 
@@ -21,12 +23,16 @@ cd yolo_face
 It downloads `yolo_face-board.tar.gz` from the latest GitHub Release, verifies
 its checksum, copies the files to `/root/yolo_face` and then
 
-1. copies `libcvi_tdl`, its dependencies (`libcnpy`, `libcvi_ive`, shared
-   OpenCV 3.2), the camera/ISP/VENC middleware and the rest of the vendor
-   runtime from the firmware into `/root/yolo_face/runtime`;
-2. uploads every `.cvimodel`/`.names` file it finds below `MODELS_DIR` or
-   `../vendor/models` into `models/face/`;
-3. verifies the package checksums on the board.
+1. keeps every library already in `/root/yolo_face/runtime`, copies missing
+   ones from the local package/`VENDOR_DIR`, and downloads the rest (including
+   `libcvi_tdl`, its dependencies, shared OpenCV 3.2 and the middleware) from
+   the pinned Cvitek TDL SDK;
+2. uploads every `.cvimodel`/`.names` file it finds below `MODELS_DIR`,
+   `../vendor/models`, `PAYLOAD_DIR/models` or `dist/board/models` into
+   `models/face/`, keeping existing files;
+3. downloads Sophgo's `scrfd_768_432_int8_1x` detector when no face detector is
+   present (the recognition and liveness models are not published upstream);
+4. verifies the package checksums on the board.
 
 Then:
 

@@ -37,11 +37,15 @@ source **you** control, on your machine:
 | Your own models | `scripts/fetch-vendor.sh --models <dir>` | `.cvimodel` files you exported with `yolo_studio` |
 | Upstream Sophgo/Milk-V repositories | `scripts/fetch-vendor.sh --download` | The parts Sophgo publishes on GitHub: middleware and TPU libraries, `cviruntime` headers, the SDK example models |
 
-`yolo_stream/install.sh` and `yolo_face/install.sh` repeat the board step
-during installation: they copy the vendor libraries from the board firmware
-into `$DEST/runtime` and upload every model found under `MODELS_DIR` (or under
-`vendor/models`). Nothing vendor-specific is transferred between machines by
-this project.
+`yolo_stream/install.sh` and `yolo_face/install.sh` repeat that work during
+installation: libraries already in `$DEST/runtime` are kept, local copies from
+the package or `VENDOR_DIR` are uploaded, and anything still missing is
+downloaded from the pinned upstream SDK (`@02dfb90`). Models are uploaded from
+`MODELS_DIR`, `vendor/models` or the local package without deleting the ones on
+the board; `yolo_face` additionally downloads the stock SCRFD detector because
+Sophgo publishes it. Recognition and liveness models are never downloaded
+automatically — they are not in the upstream SDK. Nothing vendor-specific is
+transferred between machines by this project.
 
 ## Components downloaded at build time
 
@@ -65,9 +69,11 @@ part of any release archive:
 
 | Component | Source | License | Used for |
 |---|---|---|---|
-| uv | [astral-sh/uv](https://github.com/astral-sh/uv) | Apache-2.0 OR MIT | bootstraps a private Python 3.10 when the host or WSL does not have one |
+| uv | [astral-sh/uv](https://github.com/astral-sh/uv) | Apache-2.0 OR MIT | bootstraps a private Python 3.10 when the host or WSL does not have one, and installs tpu-mlir with binary-only overrides |
 | CPython 3.10 (python-build-standalone) | [astral-sh/python-build-standalone](https://github.com/astral-sh/python-build-standalone) | PSF-2.0 (bundled third-party components keep their licenses) | interpreter for the tpu-mlir environment |
-| tpu-mlir | [sophgo/tpu-mlir](https://github.com/sophgo/tpu-mlir) | BSD-2-Clause | conversion of ONNX to `.cvimodel` |
+| tpu-mlir 1.30.2 | [sophgo/tpu-mlir](https://github.com/sophgo/tpu-mlir) | BSD-2-Clause | conversion of ONNX to `.cvimodel` |
+| PyTorch 2.11.0 CPU | [pytorch.org](https://pytorch.org/) | BSD-3-Clause | imported by tpu-mlir's ONNX transform (CPU build only) |
+| pycocotools 2.0.8, opencv-python-headless 4.8.0.76, onnxruntime 1.23.2 | PyPI | Apache-2.0 / BSD-3-Clause / MIT | replace tpu-mlir pins that cannot be installed or run on current systems |
 
 `tpu-mlir` is Linux-only. On Windows it is installed inside WSL 2; the Studio
 also downloads uv and Python there. The user can remove the environments at
@@ -94,6 +100,10 @@ The repository ships **no model weights**. There are three ways to get
 Face models (`scrfd_det_face_*`, `feature_cviface_*`,
 `cls_rgbliveness_*`) come from the Cvitek TDL SDK examples. The SCRFD
 architecture is MIT (InsightFace), the weights have no stated license.
+`yolo_face/install.sh` can download Sophgo's `scrfd_768_432_int8_1x` detector
+directly from the pinned upstream SDK; the recognition and liveness models are
+not published there, so the installer keeps any local/board copy and prints
+instructions when they are missing.
 
 ## yolo_studio dependencies
 

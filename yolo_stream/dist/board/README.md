@@ -6,9 +6,11 @@ Contents of the release package: `stream_yolo` (binary), `run_stream.sh`
 
 The package deliberately contains **no vendor libraries and no models**: the
 Cvitek/Sophgo runtime is proprietary and models are usually AGPL-3.0
-derivatives of Ultralytics, so neither is redistributed. `install.sh` copies
-the libraries from the firmware of your board and uploads the models you
-choose. See `THIRD_PARTY_NOTICES.md` in the repository.
+derivatives of Ultralytics, so neither is redistributed. `install.sh` keeps the
+libraries already on the board, uploads local copies when available and
+downloads anything still missing from the pinned upstream SDK; it uploads the
+models you choose without deleting the existing ones. See
+`THIRD_PARTY_NOTICES.md` in the repository.
 
 ## Installation
 
@@ -22,11 +24,12 @@ cd yolo_stream
 It downloads `yolo_stream-board.tar.gz` from the latest GitHub Release,
 verifies its checksum, copies the files to `/root/yolo_stream` and then
 
-1. copies the vendor libraries from `/mnt/system/lib`,
-   `/mnt/system/usr/lib` and `/mnt/system/usr/lib/3rd` into
-   `/root/yolo_stream/runtime` (the firmware already has them);
-2. uploads every `.cvimodel`/`.names` file it finds below `MODELS_DIR` or
-   `../vendor/models` if either is set and not empty;
+1. keeps every library already in `/root/yolo_stream/runtime`, copies missing
+   ones from the local package/`VENDOR_DIR`, and downloads the rest (such as
+   `libcviruntime.so` on a stripped image) from the pinned Cvitek TDL SDK;
+2. uploads every `.cvimodel`/`.names` file it finds below `MODELS_DIR`,
+   `../vendor/models`, `PAYLOAD_DIR/models` or `dist/board/models` if one of
+   those is set and not empty;
 3. verifies the package checksums on the board.
 
 You can also unpack the release tarball manually, copy its contents to

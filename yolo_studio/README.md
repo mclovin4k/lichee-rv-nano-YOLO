@@ -109,9 +109,11 @@ choose **More info → Run anyway**.
 - for conversion: a `tpu-mlir` environment (Python 3.10) — the
   `tools/build_cvimodel.sh` script and the `TPU_PY` variable. The Studio
   creates the environment itself: on Linux with the system Python or a private
-  one downloaded by `uv`, on Windows inside WSL 2. No `sudo`, `apt` or manual
-  `pip` is needed. `tpu-mlir` is Linux-only, so Windows conversion always
-  requires WSL 2 (`wsl --install`), but everything inside it is automatic.
+  one downloaded by `uv`, on Windows inside WSL 2. It installs `tpu-mlir` from
+  binary wheels only, with dependency overrides and a CPU-only `torch`, so no
+  C compiler is needed. No `sudo`, `apt` or manual `pip` is required.
+  `tpu-mlir` is Linux-only, so Windows conversion always requires WSL 2
+  (`wsl --install`), but everything inside it is automatic.
 
 **Board:**
 
@@ -168,15 +170,35 @@ py -3 -m venv %USERPROFILE%\.venvs\ultra
 For `tpu-mlir` (cvimodel conversion) the Studio can do the setup itself. Click
 **Build cvimodel** and, in the “Python not found” dialog, choose
 **Create environment…** (Linux) or **Create WSL environment…** (Windows). It
-creates `~/.venvs/tpu310` and installs `tpu-mlir`, downloading a private
-Python 3.10 with `uv` when the system does not provide one. On Linux the same
-can be done by hand:
+creates `~/.venvs/tpu310` and installs `tpu-mlir` plus a CPU-only `torch`,
+downloading a private Python 3.10 with `uv` when the system does not provide
+one. Everything is installed from binary wheels with dependency overrides, so
+no compiler or `apt` package is needed. On Linux the same can be done by hand:
 
 ```sh
 # tpu-mlir (cvimodel conversion) — Linux, Python 3.10
-python3.10 -m venv ~/.venvs/tpu310
-~/.venvs/tpu310/bin/python -m pip install tpu-mlir
+uv venv --python 3.10 ~/.venvs/tpu310
+uv pip install --python ~/.venvs/tpu310/bin/python \
+  --overrides /tmp/tpu-overrides.txt --only-binary :all: \
+  'tpu-mlir[onnx]==1.30.2' 'setuptools<81' psutil tabulate requests jinja2 \
+  markupsafe urllib3
+uv pip install --python ~/.venvs/tpu310/bin/python --no-deps \
+  --index-url https://download.pytorch.org/whl/cpu torch==2.11.0+cpu
 ```
+
+with `/tmp/tpu-overrides.txt` containing:
+
+```
+pycocotools==2.0.8
+opencv-python-headless==4.8.0.76
+onnxruntime==1.23.2
+```
+
+These overrides are needed because tpu-mlir 1.30.2 pins `pycocotools==2.0.6`
+(source-only, needs a compiler), a yanked OpenCV build and an `onnxruntime`
+that aborts on current kernels. The Studio also moves tpu-mlir's bundled glibc
+files out of its library path, because they otherwise shadow the system libc on
+Ubuntu 22.04+ and WSL and every tool fails with `GLIBC_2.36 not found`.
 
 `tpu-mlir` is Linux-only. On Linux, leave the field empty (Detect will find
 the environment) or point it at `~/.venvs/tpu310/bin/python`. On Windows,
@@ -187,12 +209,13 @@ cvimodel conversion runs inside **WSL 2**:
    manual step; the distribution may ship any Python version;
 2. click **Build cvimodel** and choose **Create WSL environment…**. The Studio
    looks for Python 3.10 in WSL and, if it is missing, downloads `uv` and a
-   private Python 3.10 into the user's home, then installs `tpu-mlir` into
-   `~/.venvs/tpu310`. No `sudo`, `apt`, `python3-venv` or manual `pip` is used;
+   private Python 3.10 into the user's home, then installs `tpu-mlir` and the
+   CPU-only `torch` into `~/.venvs/tpu310`. No `sudo`, `apt`, `python3-venv`,
+   compiler or manual `pip` is used;
 3. the field stores the Linux path, for example
    `/home/<user>/.venvs/tpu310/bin/python`.
 
-The first setup downloads about 1.5 GB (about 2.5 GB on disk) and can take
+The first setup downloads about 2 GB (about 2.5 GB on disk) and can take
 several minutes. If the environment already exists, **Detect** in Settings
 finds it.
 
@@ -363,7 +386,8 @@ training and the ONNX export through its own hidden modes
 Conversion to cvimodel still needs Linux: `tpu-mlir` does not exist for
 Windows, so the Studio runs it inside WSL 2. WSL 2 must be installed, but the
 release build includes `tools/build_cvimodel.sh` and sets up Python 3.10 plus
-`tpu-mlir` inside WSL automatically, so nothing else is installed by hand.
+`tpu-mlir` inside WSL automatically from binary wheels, so nothing else is
+installed by hand.
 
 On Linux, install the xcb development/runtime packages listed above first; the
 script copies those libraries into the bundle. The build script also adds
@@ -400,6 +424,18 @@ not need `python3-venv`: a private Python 3.10 is downloaded when the
 distribution only ships 3.12/3.14. The older “ensurepip is not available” /
 `python3.14-venv` errors cannot occur in this flow; if they are shown, the
 release is older than v1.0.4.
+
+**“error: [Errno 2] No such file or directory: 'cc'”** while building
+`pycocotools` — the release predates v1.0.5 and still used pip, which tries to
+compile tpu-mlir's source-only `pycocotools==2.0.6`. Install v1.0.5 or newer,
+delete the broken environment (inside WSL: `rm -rf ~/.venvs/tpu310`) and choose
+**Create WSL environment…** again. v1.0.5 uses uv with binary-only overrides
+and needs no compiler.
+
+**“version `GLIBC_2.36' not found”** from `model_transform.py` — the old
+environment still puts tpu-mlir's bundled glibc in `LD_LIBRARY_PATH`. v1.0.5
+moves those files to `lib/third_party/off/` during setup. Delete
+`~/.venvs/tpu310` and create it again with v1.0.5.
 
 **“The tpu-mlir interpreter must be a Linux path”** — on Windows the
 interpreter must be the Linux path of the environment inside WSL, for example

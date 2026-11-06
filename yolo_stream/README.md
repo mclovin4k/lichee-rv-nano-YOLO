@@ -22,7 +22,7 @@ implementation has been rewritten (see below).
 |---|---|
 | Sources | `main.cpp`, `yolo8.c`, `vpss_det.c`, `venc_jpeg.c`, `draw_nv21.c`, `MJPEGWriter.*` |
 | Ready-to-run package | `yolo_stream-board.tar.gz` from Releases (binary, scripts; no vendor files, no models) |
-| Runtime skeleton | `dist/board/runtime/` — empty in git; `install.sh` fills it from the board firmware |
+| Runtime skeleton | `dist/board/runtime/` — empty in git; `install.sh` keeps the board copies and restores missing libraries from local files or the upstream SDK |
 | Models | `dist/board/models/` — empty in git; upload your own or use the ones on the board |
 | Start/stop scripts | `dist/board/start_stream.sh`, `dist/board/run_stream.sh` |
 | SSH installer | `install.sh` (downloads the latest release by default) |
@@ -207,16 +207,18 @@ GitHub Release, verifies its SHA256, copies it to `/root/yolo_stream`, checks
 the package md5 list on the board, and does **not** add an autostart entry.
 
 The archive contains only this project's binary and scripts. Right after the
-upload the installer runs a small script **on the board** that copies the
-vendor libraries from `/mnt/system/lib`, `/mnt/system/usr/lib` and
-`/mnt/system/usr/lib/3rd` into `/root/yolo_stream/runtime`. Models are uploaded
-from `MODELS_DIR` or `../vendor/models` when either is set (the search is
-recursive); otherwise the models already on the board are used. Use
-`PAYLOAD_DIR` to install a locally built package instead.
+upload the installer restores the runtime libraries **without deleting what is
+already on the board**: copies found in `runtime/`, `VENDOR_DIR` or the local
+package are uploaded, and anything still missing (for example `libcviruntime.so`
+on a stripped image) is downloaded from the pinned Cvitek TDL SDK. Models are
+uploaded from `MODELS_DIR`, `../vendor/models`, `PAYLOAD_DIR/models` or
+`dist/board/models` when present (the search is recursive); otherwise the
+models already on the board are kept. Use `PAYLOAD_DIR` to install a locally
+built package instead.
 
-The installer preserves already uploaded models, and `/root/faces` is used
-only by `yolo_face`. The board address is not fixed: it differs between
-networks (USB/RNDIS, Wi-Fi, Ethernet).
+The installer never deletes `/root/yolo_stream/runtime` or `models/`, and
+`/root/faces` is used only by `yolo_face`. The board address is not fixed: it
+differs between networks (USB/RNDIS, Wi-Fi, Ethernet).
 
 The camera is configured by the stock image through `/mnt/data/sensor_cfg.ini`
 (sensor I2C address and MIPI `lane_id`). The scripts do not touch pinmux or

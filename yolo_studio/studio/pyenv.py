@@ -29,6 +29,7 @@ import shutil
 import subprocess
 import sys
 import tarfile
+import tempfile
 import urllib.request
 from pathlib import Path
 
@@ -167,16 +168,6 @@ def _wsl_home() -> str | None:
                 break
     _WSL_CACHE["home"] = home
     return home
-
-
-def _wsl_module_ok(python: str, module: str) -> bool:
-    exe = wsl_exe()
-    if exe is None:
-        return False
-    script = (f"exec {shlex.quote(python)} -c "
-              f"{shlex.quote('import ' + module)}")
-    result = _run(_wsl_script_cmd(exe, script), 120.0)
-    return result is not None and result.returncode == 0
 
 
 def _wsl_probe_tpu(configured: str = "", force: bool = False) -> str | None:
@@ -385,10 +376,58 @@ def export_argv(python: str | Path, script: Path) -> list[str] | None:
 
 # --------------------------------------------------------------- uv
 
-# uv is a small standalone Python installer. The Studio uses it only when the
-# host (or WSL) does not already have Python 3.10, which tpu-mlir requires.
-# It is downloaded from GitHub on first use; nothing is bundled in the release.
+# uv is a small standalone Python installer. The Studio uses it when the host
+# (or WSL) does not already have Python 3.10, which tpu-mlir requires, and to
+# install tpu-mlir with dependency overrides. It is downloaded from GitHub on
+# first use; nothing is bundled in the release.
 UV_DOWNLOAD = "https://github.com/astral-sh/uv/releases/latest/download"
+
+# tpu-mlir 1.30.2 is the newest release that supports Python 3.10, but its
+# metadata pins packages that cannot be installed on a current system:
+#
+# * pycocotools==2.0.6 only exists as a source distribution, so pip needs a C
+#   compiler; WSL does not ship one by default.
+# * opencv-python-headless==4.8.0.74 was yanked.
+# * onnxruntime==1.16.3 aborts on kernels with a non-executable stack.
+#
+# uv's --overrides replaces those pins without patching the wheel. The extra
+# packages are imported by tpu-mlir's code but missing from its metadata, and
+# setuptools must stay below 81 because tpu_mlir imports pkg_resources.
+TPU_VERSION = "1.30.2"
+TPU_PACKAGE = f"tpu-mlir[onnx]=={TPU_VERSION}"
+TPU_OVERRIDES = (
+    ("pycocotools", "2.0.8"),
+    ("opencv-python-headless", "4.8.0.76"),
+    ("onnxruntime", "1.23.2"),
+)
+TPU_EXTRA = (
+    "setuptools<81",
+    "psutil",
+    "tabulate",
+    "requests",
+    "jinja2",
+    "markupsafe",
+    "urllib3",
+)
+TPU_TORCH = "torch==2.11.0+cpu"
+TPU_TORCH_INDEX = "https://download.pytorch.org/whl/cpu"
+
+# The wheel ships its own copy of the C runtime and loader. On Ubuntu 22.04+ /
+# WSL it shadows the system libraries and every tpu_mlir tool dies with
+# "version `GLIBC_2.36' not found". Moving them out of the directory that
+# tpu_mlir adds to LD_LIBRARY_PATH makes the tools use the system copies.
+TPU_BUNDLED_LIBS = (
+    "libc.so.6",
+    "libm.so.6",
+    "libstdc++.so.6",
+    "libgcc_s.so.1",
+    "libpthread.so.0",
+)
+_TPU_PACKAGE_LOOKUP = (
+    "import importlib.util, os; s = importlib.util.find_spec('tpu_mlir'); "
+    "print(os.path.dirname(s.origin))")
+_TPU_IMPORT_CHECK = (
+    "import tpu_mlir, torch, onnx, onnxruntime, pycocotools, cv2")
 
 
 def _uv_target() -> str:
@@ -682,12 +721,98 @@ echo "PYTHON $PY"
     return python, rc, output
 
 
+def _tpu_overrides_text() -> str:
+    return "".join(f"{name}=={version}\n"
+                   for name, version in TPU_OVERRIDES)
+
+
+def _write_tpu_overrides(directory: Path) -> Path:
+    path = directory / "tpu-mlir-overrides.txt"
+    path.write_text(_tpu_overrides_text(), encoding="utf-8")
+    return path
+
+
+def _tpu_install_script(uv: str, python: str) -> str:
+    """Shell fragment that installs tpu-mlir + torch CPU and fixes the libs.
+
+    Used inside WSL, where quoting through ``wsl.exe`` is fragile; the local
+    Linux branch calls the same commands directly.
+    """
+    uv = shlex.quote(uv)
+    py = shlex.quote(python)
+    overrides = shlex.quote(_tpu_overrides_text())
+    extras = " ".join(shlex.quote(item) for item in TPU_EXTRA)
+    bundled = " ".join(TPU_BUNDLED_LIBS)
+    return (
+        "set -e; "
+        'OVERRIDES=$(mktemp); '
+        f'printf %s {overrides} > "$OVERRIDES"; '
+        f"{uv} pip install --python {py} --overrides \"$OVERRIDES\" "
+        f"--only-binary :all: {shlex.quote(TPU_PACKAGE)} {extras}; "
+        f"{uv} pip install --python {py} --no-deps "
+        f"--index-url {shlex.quote(TPU_TORCH_INDEX)} {shlex.quote(TPU_TORCH)}; "
+        'rm -f "$OVERRIDES"; '
+        f"SP=$({py} -c {shlex.quote(_TPU_PACKAGE_LOOKUP)}); "
+        'TP="$SP/lib/third_party"; '
+        'mkdir -p "$TP/off"; '
+        f"for n in {bundled}; do "
+        'if [ -f "$TP/$n" ]; then mv -f "$TP/$n" "$TP/off/$n"; fi; '
+        "done; "
+        f"{py} -c {shlex.quote(_TPU_IMPORT_CHECK)}"
+    )
+
+
+def _move_bundled_tpu_libs(python: str | Path, on_line=None) -> None:
+    """Move the wheel's bundled glibc next to (not into) the search path."""
+    result = _run([str(python), "-c", _TPU_PACKAGE_LOOKUP], 120.0)
+    if result is None or result.returncode != 0:
+        detail = (result.stderr or result.stdout).strip() if result else ""
+        raise RuntimeError(
+            "tpu-mlir was installed, but its package directory could not be "
+            "located" + ((":\n" + detail) if detail else ""))
+    lines = [line.strip() for line in result.stdout.splitlines() if line.strip()]
+    package = Path(lines[-1])
+    third_party = package / "lib" / "third_party"
+    disabled = third_party / "off"
+    moved = []
+    for name in TPU_BUNDLED_LIBS:
+        source = third_party / name
+        if not source.is_file():
+            continue
+        disabled.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(source), str(disabled / name))
+        moved.append(name)
+    if moved and on_line:
+        on_line("using the system C library instead of the bundled one: "
+                + ", ".join(moved))
+
+
+def _tpu_modules_ok(python: str, exe: str | None = None,
+                    timeout: float = 300.0) -> tuple[bool, str]:
+    """Import every module the conversion scripts need; return the error."""
+    if exe is not None:
+        script = f"exec {shlex.quote(python)} -c " \
+                 f"{shlex.quote(_TPU_IMPORT_CHECK)}"
+        result = _run(_wsl_script_cmd(exe, script), timeout)
+    else:
+        result = _run([python, "-c", _TPU_IMPORT_CHECK], timeout)
+    if result is None:
+        return False, "the interpreter could not be started"
+    if result.returncode == 0:
+        return True, ""
+    detail = (result.stderr or result.stdout).strip()
+    lines = detail.splitlines()
+    return False, "\n".join(lines[-8:]) if lines else detail
+
+
 def _create_wsl_env(target: str | Path | None, on_line, cancel) -> str:
     """Create the tpu-mlir virtualenv inside the default WSL distribution.
 
     Python 3.10 is used when the distribution already has it. Otherwise uv
     downloads a private Python 3.10, so the user does not have to install
     python3.10-venv or fight a distribution that ships Python 3.12/3.14.
+    uv also installs tpu-mlir with binary-only dependency overrides and a
+    CPU-only torch, so no C compiler is required by WSL.
     """
     exe = wsl_exe()
     if exe is None:
@@ -713,86 +838,84 @@ def _create_wsl_env(target: str | Path | None, on_line, cancel) -> str:
     python = target_s + "/bin/python"
 
     native, rc, _ = _wsl_python310(exe)
+    uv = _wsl_ensure_uv(exe, on_line, cancel)
     if rc == 0 and native:
         if on_line:
             on_line(f"$ wsl: {native} -m venv {target_s}")
-        script = (
-            "set -e; "
-            f"rm -rf {shlex.quote(target_s)}; "
-            f"{shlex.quote(native)} -m venv {shlex.quote(target_s)}; "
-            f"{shlex.quote(python)} -m pip install --upgrade pip; "
-            f"{shlex.quote(python)} -m pip install tpu-mlir"
-        )
+        create = f"{shlex.quote(native)} -m venv {shlex.quote(target_s)}"
     else:
-        uv = _wsl_ensure_uv(exe, on_line, cancel)
         if on_line:
             on_line("A usable Python 3.10 was not found in WSL (or its venv "
                     "support is missing); installing a private copy with "
                     "uv…")
-        script = (
-            "set -e; "
-            f"rm -rf {shlex.quote(target_s)}; "
+        create = (
             f"{shlex.quote(uv)} python install 3.10; "
-            f"{shlex.quote(uv)} venv --python 3.10 {shlex.quote(target_s)}; "
-            f"{shlex.quote(uv)} pip install --python {shlex.quote(python)} pip; "
-            f"{shlex.quote(python)} -m pip install --upgrade pip; "
-            f"{shlex.quote(python)} -m pip install tpu-mlir"
-        )
+            f"{shlex.quote(uv)} venv --python 3.10 {shlex.quote(target_s)}")
+    script = (
+        "set -e; "
+        f"rm -rf {shlex.quote(target_s)}; "
+        + create + "; "
+        + _tpu_install_script(uv, python))
 
     _stream(_wsl_script_cmd(exe, script), on_line, cancel)
     for key in [k for k in _WSL_CACHE if k.startswith("tpu:")]:
         _WSL_CACHE.pop(key, None)
     _DETECT_CACHE.pop("tpu", None)
-    if not _wsl_module_ok(python, "tpu_mlir"):
+    ok, detail = _tpu_modules_ok(python, exe)
+    if not ok:
         raise RuntimeError(
-            "the WSL environment was created, but \"import tpu_mlir\" still "
-            "fails; check the pip output above")
+            "the WSL environment was created, but the tpu-mlir/onnx/torch "
+            "imports still fail:\n" + detail +
+            "\n\nCheck the output above. If this is a fresh WSL "
+            "distribution, run \"wsl --update\" on Windows and try again.")
     return python
 
 
 def _create_local_tpu_env(target: str | Path | None, on_line, cancel) -> Path:
     """Create the tpu-mlir environment on a Linux host.
 
-    A system Python 3.10 is used when available. Otherwise uv downloads a
-    private Python 3.10, so the user does not need python3.10-venv packages.
+    A system Python 3.10 is used when available; otherwise uv downloads a
+    private one. uv then installs binary wheels only, using overrides for the
+    unusable pins in tpu-mlir's metadata, plus a CPU-only torch.
     """
     target = Path(target) if target else Path(venv_target("tpu"))
     bases = base_pythons("tpu")
+    uv = _local_uv(on_line)
+    if target.exists():
+        shutil.rmtree(target)
     if bases:
         base = bases[0]
         if on_line:
             on_line(f"$ {' '.join(base)} -m venv {target}")
-        if target.exists():
-            shutil.rmtree(target)
         _stream(base + ["-m", "venv", str(target)], on_line, cancel)
     else:
-        uv = _local_uv(on_line)
         if on_line:
             on_line("Python 3.10 is not available; installing a private copy "
                     "with uv…")
-        if target.exists():
-            shutil.rmtree(target)
         _stream([uv, "python", "install", "3.10"], on_line, cancel)
-        _stream([uv, "venv", "--python", "3.10", str(target)], on_line, cancel)
-        python = venv_python(target)
-        if python is None:
-            raise RuntimeError(f"the virtualenv in {target} has no interpreter")
-        _stream([uv, "pip", "install", "--python", str(python), "pip"],
+        _stream([uv, "venv", "--python", "3.10", str(target)],
                 on_line, cancel)
 
     python = venv_python(target)
     if python is None:
         raise RuntimeError(f"the virtualenv in {target} has no interpreter")
-    _stream([str(python), "-m", "pip", "install", "--upgrade", "pip"],
-            on_line, cancel)
-    _stream([str(python), "-m", "pip", "install", "tpu-mlir"],
-            on_line, cancel)
+    with tempfile.TemporaryDirectory(prefix="tpu-mlir-") as tmp:
+        overrides = _write_tpu_overrides(Path(tmp))
+        _stream([uv, "pip", "install", "--python", str(python),
+                 "--overrides", str(overrides), "--only-binary", ":all:",
+                 TPU_PACKAGE, *TPU_EXTRA], on_line, cancel)
+        _stream([uv, "pip", "install", "--python", str(python), "--no-deps",
+                 "--index-url", TPU_TORCH_INDEX, TPU_TORCH],
+                on_line, cancel)
+    _move_bundled_tpu_libs(python, on_line)
     _PROBE_CACHE.clear()
     _DETECT_CACHE.pop("tpu", None)
-    if not has_module([str(python)], "tpu_mlir", timeout=180.0):
+    ok, detail = _tpu_modules_ok(str(python))
+    if not ok:
         raise RuntimeError(
-            "the environment was created, but \"import tpu_mlir\" still "
-            "fails; check the pip output above")
+            "the environment was created, but the tpu-mlir/onnx/torch "
+            "imports still fail:\n" + detail +
+            "\n\nCheck the output above.")
     return python
 
 
@@ -845,9 +968,10 @@ def missing_help(kind: str) -> str:
             return (
                 "cvimodel conversion runs with tpu-mlir inside WSL 2.\n\n"
                 "Click \"Create WSL environment…\" — the Studio downloads a "
-                "private Python 3.10 and tpu-mlir into WSL automatically. No "
-                "sudo, apt or manual pip is needed (about 1.5 GB to download, "
-                "2.5 GB on disk).\n\n"
+                "private Python 3.10, tpu-mlir and a CPU-only torch into WSL "
+                "automatically. It uses binary wheels only, so no C compiler, "
+                "sudo or apt is needed (about 2 GB to download, 2.5 GB on "
+                "disk).\n\n"
                 "WSL 2 itself must be installed once. If it is not:\n"
                 "  wsl --install\n"
                 "Reboot, open the Ubuntu app once and finish its first-run "
@@ -865,8 +989,9 @@ def missing_help(kind: str) -> str:
             "only runs on Linux.\n\n"
             "Click \"Create environment…\" — the Studio downloads a private "
             "Python 3.10 with uv if the system does not have one, then "
-            "installs tpu-mlir automatically. No python3.10-venv or sudo is "
-            "required (about 1.5 GB to download, 2.5 GB on disk).\n\n"
+            "installs tpu-mlir and a CPU-only torch with binary wheels only. "
+            "No python3.10-venv, compiler or sudo is required (about 2 GB to "
+            "download, 2.5 GB on disk).\n\n"
             "Afterwards Settings → \"Python tpu-mlir\" is filled "
             "automatically. The ONNX file can also be converted on another "
             "Linux host or on the board itself."

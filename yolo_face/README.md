@@ -13,6 +13,8 @@ A ready-to-run application for the LicheeRV Nano with the GC4653 camera:
 (cviface) and passive blink-based liveness checking. The release package
 contains the binary and start scripts; vendor libraries are copied from the
 board firmware at install time and no cross-compilation is needed to run it.
+The installer also downloads missing runtime libraries and the stock SCRFD
+detector from the upstream SDK when the board does not have them.
 
 ## Contents
 
@@ -20,8 +22,8 @@ board firmware at install time and no cross-compilation is needed to run it.
 |---|---|
 | Sources | `src/` |
 | Ready-to-run package | `yolo_face-board.tar.gz` from Releases (binary, scripts; no vendor files, no models) |
-| Runtime skeleton | `dist/board/runtime/` — empty in git; `install.sh` fills it from the board firmware |
-| TDL models | `dist/board/models/face/` — empty in git; upload your own or use the ones on the board |
+| Runtime skeleton | `dist/board/runtime/` — empty in git; `install.sh` keeps the board copies and restores missing libraries from local files or the upstream SDK |
+| TDL models | `dist/board/models/face/` — empty in git; upload your own, download the stock detector, or use the ones on the board |
 | Start/stop scripts | `dist/board/start_face.sh`, `dist/board/run_face.sh` |
 | SSH installer | `install.sh` (downloads the latest release by default) |
 | Build | `CMakeLists.txt`, `cmake/`, `scripts/`, `patches/`, `../scripts/package-board.sh` |
@@ -236,15 +238,19 @@ directory. To embed the vendor files for a private, offline archive, add
 
 The repository does not ship the `scrfd_det_face_432_768`,
 `feature_cviface_112_112` and `cls_rgbliveness_256_256` models: they come from
-the TDL SDK examples and have no license file. They are already present in
-`/mnt/system/usr/bin/ai/models` on a stock image; `install.sh` copies them
-from there into `models/face/` when you do not upload your own. See
+the TDL SDK examples and have no license file. `install.sh` keeps any copies
+already in `models/face/`, copies the stock files from
+`/mnt/system/usr/bin/ai/models` when they exist, and downloads Sophgo's
+`scrfd_768_432_int8_1x.cvimodel` detector when no detector is present
+(`run_face.sh` accepts its upstream name). The recognition and liveness models
+are not published upstream and must be supplied through `MODELS_DIR`. See
 [`../models/README.md`](../models/README.md).
 
 The vendor libraries the application loads at run time (`libcvi_tdl.so`,
 `libcnpy.so`, `libcvi_ive.so`, `libcviruntime.so`, `libcvikernel.so`,
-`libcvimath.so`, shared OpenCV 3.2, `libz`) are copied from the board firmware
-during installation, not from this repository. Details and links are in
+`libcvimath.so`, shared OpenCV 3.2, `libz`) are restored during installation
+from the board, from local copies, or from the pinned upstream SDK; they are not
+stored in this repository. Details and links are in
 `../THIRD_PARTY_NOTICES.md`.
 
 OpenCV 4.13 (static, for the application) is distributed under Apache-2.0;

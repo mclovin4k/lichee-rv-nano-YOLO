@@ -38,15 +38,20 @@ together with the `.cvimodel`.
 
 Stock images ship detection and face models under
 `/mnt/system/usr/bin/ai/models`. `start_stream.sh` searches
-`/mnt/system/usr/bin/ai/models` automatically, and `yolo_face/install.sh`
-copies the three stock face models into `models/face/` when you do not upload
-your own:
+`/mnt/system/usr/bin/ai/models` automatically, and both installers upload local
+models without deleting what is already in `$DEST/models`. `yolo_face/install.sh`
+copies the three stock face models when they exist and downloads Sophgo's SCRFD
+detector when the board has none:
 
 ```sh
 # copy the models off the board first (or point MODELS_DIR at a local copy)
 scripts/fetch-vendor.sh --board <IP>
 cd yolo_stream && MODELS_DIR=../vendor/models ./install.sh <IP>
 ```
+
+The installers also restore missing vendor libraries from the board firmware,
+`VENDOR_DIR`, the package itself or the pinned upstream SDK, so a fresh board
+does not need a manual `fetch-vendor.sh` first.
 
 ### 3. SDK examples
 
@@ -72,7 +77,11 @@ cls_rgbliveness_256_256_INT8_cv181x.cvimodel
 
 They come from the Cvitek TDL SDK examples. The filenames are the contract:
 the application resolves them by name and can be pointed elsewhere with
-`SY_FD_MODEL`, `SY_FR_MODEL`, `SY_LIVE_MODEL`.
+`SY_FD_MODEL`, `SY_FR_MODEL`, `SY_LIVE_MODEL`. `run_face.sh` also accepts the
+upstream name `scrfd_768_432_int8_1x.cvimodel` for the detector, which
+`install.sh` downloads when no local detector is present. The recognition and
+liveness models are not published upstream, so they must be copied from the
+board/SDK or supplied through `MODELS_DIR`.
 
 ## Compatibility
 

@@ -35,7 +35,8 @@ find_model() { # find_model <primary> <fallback...>
 FD_MODEL=${SY_FD_MODEL:-}
 if [ -z "$FD_MODEL" ]; then
     FD_MODEL=$(find_model \
-        "$MODEL_DIR/scrfd_det_face_432_768_INT8_cv181x.cvimodel") || \
+        "$MODEL_DIR/scrfd_det_face_432_768_INT8_cv181x.cvimodel" \
+        "$MODEL_DIR/scrfd_768_432_int8_1x.cvimodel") || \
         die "face detector model not found in $MODEL_DIR"
 fi
 FR_MODEL=${SY_FR_MODEL:-}
