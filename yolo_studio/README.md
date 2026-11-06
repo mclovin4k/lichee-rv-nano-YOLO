@@ -39,12 +39,12 @@ small because it does not carry PyTorch.
 
 ```sh
 curl -fLO https://github.com/mclovin4k/lichee-rv-nano-YOLO/releases/latest/download/yolo_studio-linux-x86_64.tar.gz
-curl -fLO https://github.com/mclovin4k/lichee-rv-nano-YOLO/releases/latest/download/yolo_studio-linux-x86_64.tar.gz.sha256
-sha256sum -c yolo_studio-linux-x86_64.tar.gz.sha256
 tar -xzf yolo_studio-linux-x86_64.tar.gz
 chmod +x LicheeYOLOStudio
 ./LicheeYOLOStudio
 ```
+
+The release page shows the SHA-256 digest of the archive next to it.
 
 The Linux build is made on Ubuntu 22.04 and needs glibc 2.35 or newer
 (Ubuntu 22.04+, Debian 12+, Fedora 36+, and similar). Qt's X11 plugins and the
@@ -83,11 +83,12 @@ X11 backend does not.
 
 ```powershell
 curl.exe -fLO https://github.com/mclovin4k/lichee-rv-nano-YOLO/releases/latest/download/yolo_studio-windows-x86_64.tar.gz
-curl.exe -fLO https://github.com/mclovin4k/lichee-rv-nano-YOLO/releases/latest/download/yolo_studio-windows-x86_64.tar.gz.sha256
-# verify with: Get-FileHash yolo_studio-windows-x86_64.tar.gz -Algorithm SHA256
 tar -xzf yolo_studio-windows-x86_64.tar.gz
 .\LicheeYOLOStudio.exe
 ```
+
+The release page shows the SHA-256 digest of the archive next to it; you can
+compare it with `Get-FileHash yolo_studio-windows-x86_64.tar.gz -Algorithm SHA256`.
 
 There is no installer; the slim archive is a single `.exe` plus the license
 files. The `-full` archive is a folder — unpack it and run

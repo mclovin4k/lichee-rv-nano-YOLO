@@ -12,8 +12,9 @@ What a release contains, how it is produced and how to verify it.
 | `yolo_studio-linux-x86_64-full.tar.gz` | ~490 MB | one-folder Studio with ultralytics + torch, notices inside |
 | `yolo_studio-windows-x86_64.tar.gz` | ~105 MB | `LicheeYOLOStudio.exe` + notices |
 | `yolo_studio-windows-x86_64-full.tar.gz` | ~335 MB | one-folder Studio with ultralytics + torch, notices inside |
-| `*.sha256` | — | one per archive |
-| `SHA256SUMS.txt` | — | all of the above |
+
+GitHub computes and displays a SHA-256 digest for every asset, so no separate
+checksum files are uploaded.
 
 No vendor library and no model is part of any asset. `install.sh` copies the
 libraries from the board firmware and uploads models from `MODELS_DIR`; see
@@ -35,9 +36,9 @@ libraries from the board firmware and uploads models from `MODELS_DIR`; see
 3. `studio-windows` — the same on `windows-latest`; PyPI torch is already
    CPU-only there. The `.exe` is smoke-tested offscreen and the full bundle is
    checked with `--have-ml`.
-4. `release` — only for `v*` tags; downloads every artifact, copies the
-   archives and `.sha256` files, writes `SHA256SUMS.txt` and creates the
-   release.
+4. `release` — only for `v*` tags. A preparation job creates a draft release,
+   each build job uploads its archives to it, and the final job publishes the
+   draft. GitHub adds the SHA-256 digest of every asset automatically.
 
 ## Publishing
 
@@ -59,13 +60,12 @@ needed (the workflow generates them from commits).
 
 ## Verifying a release
 
-```sh
-gh release download v1.0.1 --pattern '*.tar.gz' --pattern 'SHA256SUMS.txt'
-sha256sum -c SHA256SUMS.txt --ignore-missing
-```
+The release page shows a SHA-256 digest under every asset; the same value is
+available through the GitHub API. To check a downloaded archive manually:
 
-Each archive also has its own `.sha256` file if you prefer to verify them one
-by one, for example `sha256sum -c yolo_stream-board.tar.gz.sha256`.
+```sh
+sha256sum yolo_stream-board.tar.gz
+```
 
 Board archive sanity check (no vendor files, no models):
 

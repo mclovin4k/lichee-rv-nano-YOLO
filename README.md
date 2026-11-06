@@ -73,7 +73,8 @@ Download the latest files from
 | `yolo_studio-linux-x86_64-full.tar.gz` | one-folder Studio with ultralytics + torch inside |
 | `yolo_studio-windows-x86_64.tar.gz` | one-file `LicheeYOLOStudio.exe` (slim) |
 | `yolo_studio-windows-x86_64-full.tar.gz` | one-folder Studio with ultralytics + torch inside |
-| `*.sha256`, `SHA256SUMS.txt` | checksums for every asset |
+
+GitHub shows the SHA-256 digest of every asset on the release page.
 
 The board archives are small because they do not carry the vendor runtime: on
 installation the libraries are copied from the firmware that is already on

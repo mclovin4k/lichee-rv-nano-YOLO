@@ -226,8 +226,6 @@ The camera is configured by the stock image through `/mnt/data/sensor_cfg.ini`
 
 ```sh
 curl -fLO https://github.com/mclovin4k/lichee-rv-nano-YOLO/releases/latest/download/yolo_stream-board.tar.gz
-curl -fLO https://github.com/mclovin4k/lichee-rv-nano-YOLO/releases/latest/download/yolo_stream-board.tar.gz.sha256
-sha256sum -c yolo_stream-board.tar.gz.sha256
 tar -xzf yolo_stream-board.tar.gz -C /tmp/yolo_stream-package
 tar -C /tmp/yolo_stream-package -cf - . | \
     ssh root@<IP> 'rm -rf /root/yolo_stream; mkdir -p /root/yolo_stream; tar -xf - -C /root/yolo_stream'

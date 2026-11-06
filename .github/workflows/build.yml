@@ -90,7 +90,6 @@ jobs:
         run: |
           gh release upload "$GITHUB_REF_NAME" \
             "out/${{ matrix.project }}-board.tar.gz" \
-            "out/${{ matrix.project }}-board.tar.gz.sha256" \
             --clobber
 
       - name: Write job summary
@@ -151,8 +150,6 @@ jobs:
           cp ../LICENSES/LGPL-3.0.txt ../THIRD_PARTY_NOTICES.md "$stage/"
           tar -C "$stage" -czf ../out/yolo_studio-linux-x86_64.tar.gz .
           rm -rf "$stage"
-          cd ../out
-          sha256sum yolo_studio-linux-x86_64.tar.gz > yolo_studio-linux-x86_64.tar.gz.sha256
 
       - name: Install ML stack for the full build
         run: |
@@ -192,10 +189,7 @@ jobs:
           mkdir -p ../out
           tar -C dist -czf ../out/yolo_studio-linux-x86_64-full.tar.gz \
             LicheeYOLOStudio-full
-          cd ../out
-          sha256sum yolo_studio-linux-x86_64-full.tar.gz \
-            > yolo_studio-linux-x86_64-full.tar.gz.sha256
-          ls -lh
+          ls -lh ../out
 
       - name: Publish Linux packages to the draft release
         if: startsWith(github.ref, 'refs/tags/v')
@@ -204,9 +198,7 @@ jobs:
         run: |
           gh release upload "$GITHUB_REF_NAME" \
             out/yolo_studio-linux-x86_64.tar.gz \
-            out/yolo_studio-linux-x86_64.tar.gz.sha256 \
             out/yolo_studio-linux-x86_64-full.tar.gz \
-            out/yolo_studio-linux-x86_64-full.tar.gz.sha256 \
             --clobber
 
   studio-windows:
@@ -254,9 +246,6 @@ jobs:
           Copy-Item dist\LicheeYOLOStudio.exe $stage
           Copy-Item ..\LICENSES\LGPL-3.0.txt, ..\THIRD_PARTY_NOTICES.md $stage
           tar -C $stage -czf ..\out\yolo_studio-windows-x86_64.tar.gz .
-          Get-FileHash ..\out\yolo_studio-windows-x86_64.tar.gz -Algorithm SHA256 |
-            ForEach-Object { "$($_.Hash.ToLower())  yolo_studio-windows-x86_64.tar.gz" } |
-            Set-Content -Encoding ascii ..\out\yolo_studio-windows-x86_64.tar.gz.sha256
 
       - name: Install ML stack for the full build
         run: python -m pip install ultralytics onnx onnxruntime onnxslim
@@ -299,9 +288,6 @@ jobs:
         shell: pwsh
         run: |
           tar -C dist -czf ..\out\yolo_studio-windows-x86_64-full.tar.gz LicheeYOLOStudio-full
-          Get-FileHash ..\out\yolo_studio-windows-x86_64-full.tar.gz -Algorithm SHA256 |
-            ForEach-Object { "$($_.Hash.ToLower())  yolo_studio-windows-x86_64-full.tar.gz" } |
-            Set-Content -Encoding ascii ..\out\yolo_studio-windows-x86_64-full.tar.gz.sha256
           Get-ChildItem ..\out | Format-Table Name, Length
 
       - name: Publish Windows packages to the draft release
@@ -312,9 +298,7 @@ jobs:
         run: |
           gh release upload $env:GITHUB_REF_NAME `
             out/yolo_studio-windows-x86_64.tar.gz `
-            out/yolo_studio-windows-x86_64.tar.gz.sha256 `
             out/yolo_studio-windows-x86_64-full.tar.gz `
-            out/yolo_studio-windows-x86_64-full.tar.gz.sha256 `
             --clobber
 
   release:
@@ -323,21 +307,9 @@ jobs:
     needs: [prepare-release, riscv, studio-linux, studio-windows]
     runs-on: ubuntu-latest
     steps:
-      - name: Add SHA256SUMS.txt and publish the draft
+      - name: Publish the draft release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          set -euo pipefail
-          mkdir -p release
-          gh release download "$GITHUB_REF_NAME" --dir release
-          rm -f release/SHA256SUMS.txt
-          (
-            cd release
-            find . -maxdepth 1 -type f -printf '%f\n' | sort | \
-              xargs -r sha256sum > SHA256SUMS.txt
-            ls -lh
-          )
-          gh release upload "$GITHUB_REF_NAME" \
-            release/SHA256SUMS.txt --clobber
           gh release edit "$GITHUB_REF_NAME" --draft=false
           echo "published https://github.com/${GITHUB_REPOSITORY}/releases/tag/${GITHUB_REF_NAME}"

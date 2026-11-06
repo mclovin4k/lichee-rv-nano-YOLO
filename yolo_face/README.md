@@ -87,8 +87,6 @@ The camera is configured by the stock image through `/mnt/data/sensor_cfg.ini`
 
 ```sh
 curl -fLO https://github.com/mclovin4k/lichee-rv-nano-YOLO/releases/latest/download/yolo_face-board.tar.gz
-curl -fLO https://github.com/mclovin4k/lichee-rv-nano-YOLO/releases/latest/download/yolo_face-board.tar.gz.sha256
-sha256sum -c yolo_face-board.tar.gz.sha256
 tar -xzf yolo_face-board.tar.gz -C /tmp/yolo_face-package
 tar -C /tmp/yolo_face-package -cf - . | \
     ssh root@<IP> 'rm -rf /root/yolo_face; mkdir -p /root/yolo_face; tar -xf - -C /root/yolo_face'
