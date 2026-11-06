@@ -453,9 +453,21 @@ class ModelPage(QWidget):
                 question = (
                     f"Create {target} in the default WSL 2 distribution and "
                     f"install {info['install']} into it?\n\n"
-                    "WSL 2 must already be installed: if it is not, cancel "
-                    "and run \"wsl --install\" in PowerShell first.\n\n"
-                    "The download can take several minutes.")
+                    "No sudo, apt or manual pip is needed: if WSL does not "
+                    "have Python 3.10, the Studio downloads a private copy "
+                    "with uv.\n\n"
+                    "About 1.5 GB will be downloaded once (about 2.5 GB on "
+                    "disk) and the installation can take several minutes.\n\n"
+                    "WSL 2 itself must already be installed: if it is not, "
+                    "cancel and run \"wsl --install\" in PowerShell first.")
+            elif kind == "tpu":
+                question = (
+                    f"Create {target} and install tpu-mlir into it?\n\n"
+                    "No sudo or system packages are needed: if Python 3.10 "
+                    "is missing, the Studio downloads a private copy with "
+                    "uv.\n\n"
+                    "About 1.5 GB will be downloaded once (about 2.5 GB on "
+                    "disk) and the installation can take several minutes.")
             else:
                 question = (
                     f"Create {target} and install {info['install']} into it?\n\n"

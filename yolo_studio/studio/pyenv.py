@@ -21,11 +21,15 @@ from __future__ import annotations
 
 import base64
 import importlib.util
+import io
 import os
+import platform
 import shlex
 import shutil
 import subprocess
 import sys
+import tarfile
+import urllib.request
 from pathlib import Path
 
 APP_DIR = Path(__file__).resolve().parent.parent
@@ -107,13 +111,14 @@ def sibling(python: str | Path, name: str) -> Path | None:
     return None
 
 
-def _run(cmd: list[str], timeout: float) -> subprocess.CompletedProcess | None:
+def _run(cmd: list[str], timeout: float,
+         encoding: str = "utf-8") -> subprocess.CompletedProcess | None:
     kwargs: dict = {}
     if WIN:
         kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
     try:
         return subprocess.run(cmd, capture_output=True, text=True,
-                              encoding="utf-8", errors="replace",
+                              encoding=encoding, errors="replace",
                               timeout=timeout, check=False, **kwargs)
     except (OSError, subprocess.SubprocessError):
         return None
@@ -150,12 +155,16 @@ def _wsl_home() -> str | None:
         return None
     if "home" in _WSL_CACHE:
         return _WSL_CACHE["home"]
-    result = _run([exe, "-e", "printenv", "HOME"], 30.0)
+    result = _run([exe, "-e", "printenv", "HOME"], 60.0)
     home = None
     if result is not None and result.returncode == 0:
         lines = [line.strip() for line in result.stdout.splitlines() if line.strip()]
-        if lines and lines[-1].startswith("/"):
-            home = lines[-1]
+        # WSL occasionally prints a warning around the command output; take
+        # the last absolute path instead of assuming it is the last line.
+        for line in reversed(lines):
+            if line.startswith("/"):
+                home = line
+                break
     _WSL_CACHE["home"] = home
     return home
 
@@ -374,16 +383,217 @@ def export_argv(python: str | Path, script: Path) -> list[str] | None:
     return [str(python), str(script)]
 
 
+# --------------------------------------------------------------- uv
+
+# uv is a small standalone Python installer. The Studio uses it only when the
+# host (or WSL) does not already have Python 3.10, which tpu-mlir requires.
+# It is downloaded from GitHub on first use; nothing is bundled in the release.
+UV_DOWNLOAD = "https://github.com/astral-sh/uv/releases/latest/download"
+
+
+def _uv_target() -> str:
+    """The Linux architecture triple used by the uv release archives.
+
+    WSL is always Linux, even when the Studio itself runs on Windows, so this
+    is also the correct target for the Windows build.
+    """
+    machine = platform.machine().lower()
+    if machine in ("x86_64", "amd64"):
+        return "x86_64-unknown-linux-gnu"
+    if machine in ("aarch64", "arm64"):
+        return "aarch64-unknown-linux-gnu"
+    raise RuntimeError(
+        f"unsupported architecture for the automatic tpu-mlir setup: "
+        f"{platform.machine()}")
+
+
+def _uv_cache() -> Path:
+    """Where the downloaded Linux uv binary is cached."""
+    if WIN:
+        base = Path(os.environ.get("LOCALAPPDATA")
+                    or (Path.home() / "AppData" / "Local"))
+        return base / "LicheeYOLOStudio" / "uv" / "uv"
+    return Path.home() / ".cache" / "lichee-yolo" / "uv" / "uv"
+
+
+def _download_uv(on_line=None) -> Path:
+    """Download the uv Linux binary once and return its cached path."""
+    dest = _uv_cache()
+    if dest.is_file() and dest.stat().st_size > 1_000_000:
+        return dest
+    target = _uv_target()
+    url = f"{UV_DOWNLOAD}/uv-{target}.tar.gz"
+    if on_line:
+        on_line(f"downloading uv from {url}")
+    try:
+        with urllib.request.urlopen(url, timeout=180) as response:
+            data = response.read()
+    except Exception as exc:  # noqa: BLE001 - network errors are varied
+        raise RuntimeError(
+            "could not download uv, which is needed to install a private "
+            f"Python 3.10:\n  {url}\n{exc}") from exc
+    try:
+        with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as archive:
+            member = next(
+                (m for m in archive.getmembers()
+                 if m.isfile() and m.name.rsplit("/", 1)[-1] == "uv"), None)
+            if member is None:
+                raise RuntimeError("the uv archive does not contain the uv binary")
+            handle = archive.extractfile(member)
+            if handle is None:
+                raise RuntimeError("could not read the uv binary from the archive")
+            binary = handle.read()
+    except (tarfile.TarError, OSError) as exc:
+        raise RuntimeError(f"could not unpack uv: {exc}") from exc
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    temporary = dest.with_name(dest.name + ".tmp")
+    temporary.write_bytes(binary)
+    try:
+        temporary.chmod(0o755)
+    except OSError:
+        pass
+    temporary.replace(dest)
+    if on_line:
+        on_line(f"uv saved to {dest}")
+    return dest
+
+
+def _local_uv(on_line=None) -> str:
+    """Path to a uv binary usable on the Linux host (or in WSL)."""
+    for candidate in (shutil.which("uv"),
+                      str(Path.home() / ".local" / "bin" / "uv"),
+                      str(Path.home() / ".cargo" / "bin" / "uv")):
+        if candidate and Path(candidate).is_file():
+            return candidate
+    return str(_download_uv(on_line))
+
+
+def _wsl_mount_path(path: Path) -> str:
+    """Translate C:\\... to /mnt/c/... without calling wslpath."""
+    text = str(path)
+    drive, rest = os.path.splitdrive(text)
+    if drive:
+        return "/mnt/" + drive[0].lower() + rest.replace("\\", "/")
+    return text
+
+
+def _wsl_ensure_uv(exe: str, on_line=None, cancel=None) -> str:
+    """Make sure ``uv`` exists inside WSL; return its absolute Linux path."""
+    home = _wsl_home()
+    if not home:
+        raise RuntimeError(
+            "WSL is installed, but its home directory could not be read.\n"
+            "Open the Ubuntu app once from the Start menu, finish the "
+            "first-run setup, then try again. You can check it in "
+            "PowerShell with:\n  wsl -e printenv HOME")
+    # /mnt/* is a Windows executable reached through WSL interop; it would
+    # create a Windows virtualenv, so it must not be used here.
+    probe = (
+        'P=""; '
+        'if command -v uv >/dev/null 2>&1; then P=$(command -v uv); '
+        'elif [ -x "$HOME/.local/bin/uv" ]; then P="$HOME/.local/bin/uv"; '
+        'else exit 1; fi; '
+        'case "$P" in /mnt/*) exit 1;; esac; '
+        'printf "%s\\n" "$P"'
+    )
+    result = _run(_wsl_script_cmd(exe, probe), 30.0)
+    if result is not None and result.returncode == 0:
+        lines = [line.strip() for line in result.stdout.splitlines()
+                 if line.strip()]
+        if lines:
+            return lines[-1]
+
+    local = _download_uv(on_line)
+    mounted = _wsl_mount_path(local)
+    destination = home.rstrip("/") + "/.local/bin/uv"
+    script = (
+        'mkdir -p "$HOME/.local/bin" && '
+        f"cp {shlex.quote(mounted)} {shlex.quote(destination)} && "
+        f"chmod +x {shlex.quote(destination)} && "
+        f"{shlex.quote(destination)} --version"
+    )
+    result = _run(_wsl_script_cmd(exe, script), 180.0)
+    if result is not None and result.returncode == 0:
+        return destination
+
+    # The Windows drive may not be mounted inside WSL. Download uv with the
+    # tools that the distribution already has instead.
+    target = _uv_target()
+    url = f"{UV_DOWNLOAD}/uv-{target}.tar.gz"
+    fallback = (
+        "set -e; "
+        'mkdir -p "$HOME/.local/bin"; '
+        f"URL={shlex.quote(url)}; "
+        'TMP=$(mktemp -d); '
+        'if command -v curl >/dev/null 2>&1; then '
+        'curl -fLsS "$URL" -o "$TMP/uv.tar.gz"; '
+        'elif command -v wget >/dev/null 2>&1; then '
+        'wget -qO "$TMP/uv.tar.gz" "$URL"; '
+        "else echo 'curl or wget is required to download uv' >&2; exit 1; fi; "
+        'tar -xzf "$TMP/uv.tar.gz" -C "$TMP"; '
+        f'cp "$TMP/uv-{target}/uv" "$HOME/.local/bin/uv"; '
+        'chmod +x "$HOME/.local/bin/uv"; '
+        'rm -rf "$TMP"; '
+        '"$HOME/.local/bin/uv" --version'
+    )
+    if on_line:
+        on_line("copying uv into WSL failed; downloading it inside WSL…")
+    try:
+        _stream(_wsl_script_cmd(exe, fallback), on_line, cancel)
+    except RuntimeError as exc:
+        detail = ""
+        if result is not None:
+            detail = (result.stderr or result.stdout).strip()
+        raise RuntimeError(
+            "could not install uv inside WSL. Check that the distribution "
+            "has curl or wget and internet access.\n"
+            "If the default distribution is not a normal Linux distro "
+            "(for example docker-desktop), make Ubuntu the default:\n"
+            "  wsl --install -d Ubuntu-22.04\n"
+            "  wsl --set-default Ubuntu-22.04\n"
+            + (detail + "\n" if detail else "")
+            + str(exc)) from exc
+    return destination
+
+
 # --------------------------------------------------------------- setup
 
 
-def base_pythons() -> list[list[str]]:
-    """Interpreters that can create a virtualenv (any Python 3)."""
+def _python_version(cmd: list[str]) -> tuple[int, int] | None:
+    """Major and minor version of an interpreter, or None if it cannot run."""
+    result = _run(
+        cmd + ["-c", "import sys; print('%d.%d' % sys.version_info[:2])"],
+        30.0)
+    if result is None or result.returncode != 0:
+        return None
+    line = (result.stdout.strip().splitlines() or [""])[-1]
+    try:
+        major, minor = line.split(".", 1)
+        return int(major), int(minor)
+    except ValueError:
+        return None
+
+
+def base_pythons(kind: str = "ultra") -> list[list[str]]:
+    """Interpreters that can create a virtualenv.
+
+    tpu-mlir only supports Python 3.10, so a 3.12/3.14 interpreter must never
+    be used for the tpu environment: pip would reject the package and venv
+    may not even have ensurepip.
+    """
+    wanted = (3, 10) if kind == "tpu" else None
     found: list[list[str]] = []
-    for cmd in candidates("ultra"):
+    if wanted is not None:
+        named = shutil.which("python3.10")
+        if named:
+            found.append([named])
+    for cmd in candidates(kind):
         if cmd in found:
             continue
-        if has_module(cmd, "venv", timeout=30.0):
+        if wanted is not None and _python_version(cmd) != wanted:
+            continue
+        if has_module(cmd, "venv", timeout=30.0) and (
+                wanted is None or has_module(cmd, "ensurepip", timeout=30.0)):
             found.append(cmd)
     return found
 
@@ -422,8 +632,63 @@ def _stream(cmd: list[str], on_line=None, cancel=None) -> None:
                            % (rc, " ".join(str(c) for c in cmd)))
 
 
+def _wsl_python310(exe: str) -> tuple[str | None, int, str]:
+    """Look for Python 3.10 (with venv) inside WSL.
+
+    Returns ``(interpreter, exit_code, output)``. A non-zero code is not an
+    error here: the caller falls back to uv, which downloads a private 3.10.
+    """
+    script = r'''
+if command -v python3.10 >/dev/null 2>&1; then
+  PY=python3.10
+elif command -v python3 >/dev/null 2>&1; then
+  PY=python3
+else
+  echo NO_PYTHON
+  exit 2
+fi
+# Do not use Windows Python through WSL interop (/mnt/c/...): it creates a
+# Windows virtualenv, not a Linux one.
+case "$(command -v "$PY")" in
+  /mnt/*)
+    echo "WINDOWS_PYTHON $PY"
+    exit 5
+    ;;
+esac
+V=$("$PY" -c 'import sys; print("%d.%d" % sys.version_info[:2])' 2>/dev/null || true)
+if [ "$V" != "3.10" ]; then
+  . /etc/os-release 2>/dev/null || true
+  echo "VERSION ${V:-unknown}"
+  echo "DISTRO ${PRETTY_NAME:-unknown}"
+  exit 4
+fi
+TMP=$(mktemp -d)
+if ! "$PY" -m venv "$TMP/venv" >/dev/null 2>&1; then
+  rm -rf "$TMP"
+  echo "NO_VENV $PY"
+  exit 3
+fi
+rm -rf "$TMP"
+echo "PYTHON $PY"
+'''
+    result = _run(_wsl_script_cmd(exe, script), 60.0)
+    rc = result.returncode if result is not None else -1
+    output = result.stdout if result is not None else ""
+    python = None
+    for line in output.splitlines():
+        if line.startswith("PYTHON "):
+            python = line[len("PYTHON "):].strip()
+            break
+    return python, rc, output
+
+
 def _create_wsl_env(target: str | Path | None, on_line, cancel) -> str:
-    """Create the tpu-mlir virtualenv inside the default WSL distribution."""
+    """Create the tpu-mlir virtualenv inside the default WSL distribution.
+
+    Python 3.10 is used when the distribution already has it. Otherwise uv
+    downloads a private Python 3.10, so the user does not have to install
+    python3.10-venv or fight a distribution that ships Python 3.12/3.14.
+    """
     exe = wsl_exe()
     if exe is None:
         raise RuntimeError(
@@ -433,9 +698,10 @@ def _create_wsl_env(target: str | Path | None, on_line, cancel) -> str:
     home = _wsl_home()
     if not home:
         raise RuntimeError(
-            "WSL is installed, but its home directory could not be read. "
-            "Open the WSL terminal once (wsl.exe), finish the first-run "
-            "setup, then try again.")
+            "WSL is installed, but its home directory could not be read.\n"
+            "Open the Ubuntu app once from the Start menu, finish the "
+            "first-run setup, then try again. You can check it in PowerShell "
+            "with:\n  wsl -e printenv HOME")
     target_s = str(target) if target else f"{home}/.venvs/tpu310"
     if target_s.startswith("~/"):
         target_s = home + target_s[1:]
@@ -445,37 +711,34 @@ def _create_wsl_env(target: str | Path | None, on_line, cancel) -> str:
             f"path.\nUse a Linux path such as {home}/.venvs/tpu310.")
     target_s = target_s.rstrip("/") or f"{home}/.venvs/tpu310"
     python = target_s + "/bin/python"
-    check = _run(_wsl_script_cmd(
-        exe,
-        'PY=python3.10; command -v "$PY" >/dev/null 2>&1 || PY=python3; '
-        'command -v "$PY" >/dev/null 2>&1 || exit 2; '
-        '"$PY" -m venv --help >/dev/null 2>&1 || exit 3'), 60.0)
-    rc = check.returncode if check is not None else -1
-    if rc == 2:
-        raise RuntimeError(
-            "Python 3 was not found inside WSL. Open the Ubuntu terminal and "
-            "install it:\n  sudo apt update && sudo apt install python3 "
-            "python3-venv python3-pip")
-    if rc == 3:
-        raise RuntimeError(
-            "Python virtualenv support is missing inside WSL. Open the Ubuntu "
-            "terminal and install it:\n"
-            "  sudo apt update && sudo apt install python3-venv python3-pip\n"
-            "On a distro with Python 3.10 use python3.10-venv instead, then "
-            "try again.")
-    if rc != 0:
-        raise RuntimeError(
-            "could not check the Python installation inside WSL; open the "
-            "Ubuntu terminal once, finish the first-run setup, then try again.")
-    if on_line:
-        on_line(f"$ wsl: python3 -m venv {target_s}")
-    script = (
-        "set -e; PY=python3; "
-        "if command -v python3.10 >/dev/null 2>&1; then PY=python3.10; fi; "
-        f'"$PY" -m venv {shlex.quote(target_s)}; '
-        f'{shlex.quote(python)} -m pip install --upgrade pip; '
-        f'{shlex.quote(python)} -m pip install tpu-mlir'
-    )
+
+    native, rc, _ = _wsl_python310(exe)
+    if rc == 0 and native:
+        if on_line:
+            on_line(f"$ wsl: {native} -m venv {target_s}")
+        script = (
+            "set -e; "
+            f"rm -rf {shlex.quote(target_s)}; "
+            f"{shlex.quote(native)} -m venv {shlex.quote(target_s)}; "
+            f"{shlex.quote(python)} -m pip install --upgrade pip; "
+            f"{shlex.quote(python)} -m pip install tpu-mlir"
+        )
+    else:
+        uv = _wsl_ensure_uv(exe, on_line, cancel)
+        if on_line:
+            on_line("A usable Python 3.10 was not found in WSL (or its venv "
+                    "support is missing); installing a private copy with "
+                    "uv…")
+        script = (
+            "set -e; "
+            f"rm -rf {shlex.quote(target_s)}; "
+            f"{shlex.quote(uv)} python install 3.10; "
+            f"{shlex.quote(uv)} venv --python 3.10 {shlex.quote(target_s)}; "
+            f"{shlex.quote(uv)} pip install --python {shlex.quote(python)} pip; "
+            f"{shlex.quote(python)} -m pip install --upgrade pip; "
+            f"{shlex.quote(python)} -m pip install tpu-mlir"
+        )
+
     _stream(_wsl_script_cmd(exe, script), on_line, cancel)
     for key in [k for k in _WSL_CACHE if k.startswith("tpu:")]:
         _WSL_CACHE.pop(key, None)
@@ -483,6 +746,52 @@ def _create_wsl_env(target: str | Path | None, on_line, cancel) -> str:
     if not _wsl_module_ok(python, "tpu_mlir"):
         raise RuntimeError(
             "the WSL environment was created, but \"import tpu_mlir\" still "
+            "fails; check the pip output above")
+    return python
+
+
+def _create_local_tpu_env(target: str | Path | None, on_line, cancel) -> Path:
+    """Create the tpu-mlir environment on a Linux host.
+
+    A system Python 3.10 is used when available. Otherwise uv downloads a
+    private Python 3.10, so the user does not need python3.10-venv packages.
+    """
+    target = Path(target) if target else Path(venv_target("tpu"))
+    bases = base_pythons("tpu")
+    if bases:
+        base = bases[0]
+        if on_line:
+            on_line(f"$ {' '.join(base)} -m venv {target}")
+        if target.exists():
+            shutil.rmtree(target)
+        _stream(base + ["-m", "venv", str(target)], on_line, cancel)
+    else:
+        uv = _local_uv(on_line)
+        if on_line:
+            on_line("Python 3.10 is not available; installing a private copy "
+                    "with uv…")
+        if target.exists():
+            shutil.rmtree(target)
+        _stream([uv, "python", "install", "3.10"], on_line, cancel)
+        _stream([uv, "venv", "--python", "3.10", str(target)], on_line, cancel)
+        python = venv_python(target)
+        if python is None:
+            raise RuntimeError(f"the virtualenv in {target} has no interpreter")
+        _stream([uv, "pip", "install", "--python", str(python), "pip"],
+                on_line, cancel)
+
+    python = venv_python(target)
+    if python is None:
+        raise RuntimeError(f"the virtualenv in {target} has no interpreter")
+    _stream([str(python), "-m", "pip", "install", "--upgrade", "pip"],
+            on_line, cancel)
+    _stream([str(python), "-m", "pip", "install", "tpu-mlir"],
+            on_line, cancel)
+    _PROBE_CACHE.clear()
+    _DETECT_CACHE.pop("tpu", None)
+    if not has_module([str(python)], "tpu_mlir", timeout=180.0):
+        raise RuntimeError(
+            "the environment was created, but \"import tpu_mlir\" still "
             "fails; check the pip output above")
     return python
 
@@ -495,9 +804,12 @@ def create_env(kind: str, target: str | Path | None = None, on_line=None,
     while, so everything is streamed to the log.
     """
     info = KINDS[kind]
-    if kind == "tpu" and WIN:
-        return _create_wsl_env(target, on_line, cancel)
-    bases = base_pythons()
+    if kind == "tpu":
+        if WIN:
+            return _create_wsl_env(target, on_line, cancel)
+        return _create_local_tpu_env(target, on_line, cancel)
+
+    bases = base_pythons(kind)
     if not bases:
         raise RuntimeError(
             "no Python 3 interpreter was found. Install it from "
@@ -532,29 +844,32 @@ def missing_help(kind: str) -> str:
         if WIN:
             return (
                 "cvimodel conversion runs with tpu-mlir inside WSL 2.\n\n"
-                "Click \"Create environment…\" in this dialog to create the "
-                "environment in WSL automatically. If WSL 2 is not installed "
-                "yet, install it first from an administrator PowerShell:\n"
+                "Click \"Create WSL environment…\" — the Studio downloads a "
+                "private Python 3.10 and tpu-mlir into WSL automatically. No "
+                "sudo, apt or manual pip is needed (about 1.5 GB to download, "
+                "2.5 GB on disk).\n\n"
+                "WSL 2 itself must be installed once. If it is not:\n"
                 "  wsl --install\n"
-                "Reboot if asked and finish the Ubuntu first-run setup.\n\n"
-                "Or create it manually in the Ubuntu terminal:\n"
-                "  sudo apt update && sudo apt install python3.10-venv\n"
-                "  python3.10 -m venv ~/.venvs/tpu310\n"
-                "  ~/.venvs/tpu310/bin/python -m pip install tpu-mlir\n\n"
-                "Then set Settings → \"Python tpu-mlir\" to\n"
-                "  /home/<user>/.venvs/tpu310/bin/python\n\n"
-                "The ONNX file produced here can also be converted on a Linux "
-                "host or on the board itself."
+                "Reboot, open the Ubuntu app once and finish its first-run "
+                "setup, then try again. If WSL is installed but the default "
+                "distribution is not Ubuntu:\n"
+                "  wsl --install -d Ubuntu-22.04\n"
+                "  wsl --set-default Ubuntu-22.04\n\n"
+                "After the environment is created, Settings → \"Python "
+                "tpu-mlir\" contains the Linux path automatically. The ONNX "
+                "file can also be converted on a Linux host or on the board "
+                "itself."
             )
         return (
             "Lichee YOLO Studio converts ONNX to cvimodel with tpu-mlir, which "
             "only runs on Linux.\n\n"
-            "Create an environment (Python 3.10):\n"
-            "  python3.10 -m venv ~/.venvs/tpu310\n"
-            "  ~/.venvs/tpu310/bin/python -m pip install tpu-mlir\n\n"
-            "Then set Settings → \"Python tpu-mlir\" to\n"
-            "  ~/.venvs/tpu310/bin/python\n\n"
-            "Click \"Detect\" in Settings to search automatically."
+            "Click \"Create environment…\" — the Studio downloads a private "
+            "Python 3.10 with uv if the system does not have one, then "
+            "installs tpu-mlir automatically. No python3.10-venv or sudo is "
+            "required (about 1.5 GB to download, 2.5 GB on disk).\n\n"
+            "Afterwards Settings → \"Python tpu-mlir\" is filled "
+            "automatically. The ONNX file can also be converted on another "
+            "Linux host or on the board itself."
         )
     if WIN:
         return (

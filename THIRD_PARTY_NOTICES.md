@@ -10,7 +10,7 @@ from the user's own board, or installed from the Python package index. This
 file lists those components, their licenses and where they come from. Full
 license texts are in `LICENSES/`.
 
-Snapshot date: 2026-11-02.
+Snapshot date: 2026-11-06.
 
 ## What is in the repository
 
@@ -52,12 +52,26 @@ this project.
 | cvitek-tdl-sdk-sg200x | [milkv-duo](https://github.com/milkv-duo/cvitek-tdl-sdk-sg200x) @ `02dfb90` | **no license file** | middleware headers, `libvenc.so`, `libsys.so`, prebuilt `libcviruntime.so`/`libcvikernel.so` at build time |
 | cviruntime headers | [sophgo/cviruntime](https://github.com/sophgo/cviruntime) @ `ef80449` | **no license file** | `cviruntime.h`, `cvitpu_debug.h` |
 | RISC-V musl toolchain | [musl-cross 20261001](https://github.com/musl-cross/musl-cross/releases/tag/20261001) | GPL-3.0 / LGPL-2.1 / MIT + exceptions | cross compiler (build tool only) |
-| tpu-mlir | [sophgo/tpu-mlir](https://github.com/sophgo/tpu-mlir) | Apache-2.0 | conversion to `.cvimodel` (installed by the user) |
 
 The SDK and `cviruntime` files are fetched into `.deps/` or `vendor/` and are
 used **only on the machine that builds**; they are not committed and not part
 of any release archive. If you build with `--with-vendor`, the resulting
 archive is for your own use — do not publish it.
+
+## Components downloaded at run time by yolo_studio
+
+These are downloaded into the user's home directory on first use and are not
+part of any release archive:
+
+| Component | Source | License | Used for |
+|---|---|---|---|
+| uv | [astral-sh/uv](https://github.com/astral-sh/uv) | Apache-2.0 OR MIT | bootstraps a private Python 3.10 when the host or WSL does not have one |
+| CPython 3.10 (python-build-standalone) | [astral-sh/python-build-standalone](https://github.com/astral-sh/python-build-standalone) | PSF-2.0 (bundled third-party components keep their licenses) | interpreter for the tpu-mlir environment |
+| tpu-mlir | [sophgo/tpu-mlir](https://github.com/sophgo/tpu-mlir) | BSD-2-Clause | conversion of ONNX to `.cvimodel` |
+
+`tpu-mlir` is Linux-only. On Windows it is installed inside WSL 2; the Studio
+also downloads uv and Python there. The user can remove the environments at
+any time; nothing is installed system-wide and no `sudo`/`apt` is used.
 
 ## Models
 

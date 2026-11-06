@@ -120,10 +120,12 @@ Both Studio variants need no Python and no installer:
   `LicheeYOLOStudio-full\LicheeYOLOStudio-full.exe`. If SmartScreen appears,
   choose **More info → Run anyway**.
 
-On Windows, `tpu-mlir` runs inside **WSL 2**: the Studio can create the
+On Windows, `tpu-mlir` runs inside **WSL 2**: the Studio creates the
 environment there, calls `wsl.exe` for the `.cvimodel` step and translates the
 paths automatically. Install WSL 2 once with `wsl --install` if it is not
-present; the ONNX file itself is portable.
+present; after that no Python, `tpu-mlir`, `sudo` or `apt` setup is required —
+the Studio downloads a private Python 3.10 with `uv` when the distribution does
+not have one. The ONNX file itself is portable.
 
 The Qt X11 library `libxcb-cursor.so.0` is bundled in the Linux builds. The
 OpenGL/EGL stack comes from the system (`libegl1`, `libgl1`, `libxkbcommon0`,

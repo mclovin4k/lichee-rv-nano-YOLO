@@ -107,8 +107,11 @@ choose **More info → Run anyway**.
 - for training: the `-full` build, or a separate environment with
   `ultralytics` + `torch` (CPU);
 - for conversion: a `tpu-mlir` environment (Python 3.10) — the
-  `tools/build_cvimodel.sh` script and the `TPU_PY` variable. On Windows the
-  environment lives inside WSL 2; the Studio creates and runs it there.
+  `tools/build_cvimodel.sh` script and the `TPU_PY` variable. The Studio
+  creates the environment itself: on Linux with the system Python or a private
+  one downloaded by `uv`, on Windows inside WSL 2. No `sudo`, `apt` or manual
+  `pip` is needed. `tpu-mlir` is Linux-only, so Windows conversion always
+  requires WSL 2 (`wsl --install`), but everything inside it is automatic.
 
 **Board:**
 
@@ -162,25 +165,36 @@ py -3 -m venv %USERPROFILE%\.venvs\ultra
 %USERPROFILE%\.venvs\ultra\Scripts\python -m pip install ultralytics
 ```
 
+For `tpu-mlir` (cvimodel conversion) the Studio can do the setup itself. Click
+**Build cvimodel** and, in the “Python not found” dialog, choose
+**Create environment…** (Linux) or **Create WSL environment…** (Windows). It
+creates `~/.venvs/tpu310` and installs `tpu-mlir`, downloading a private
+Python 3.10 with `uv` when the system does not provide one. On Linux the same
+can be done by hand:
+
 ```sh
 # tpu-mlir (cvimodel conversion) — Linux, Python 3.10
 python3.10 -m venv ~/.venvs/tpu310
 ~/.venvs/tpu310/bin/python -m pip install tpu-mlir
 ```
 
-`tpu-mlir` is Linux-only. On Linux, create the environment as shown above and
-leave the field empty (Detect will find it) or point it at
-`~/.venvs/tpu310/bin/python`. On Windows, cvimodel conversion runs inside
-**WSL 2**:
+`tpu-mlir` is Linux-only. On Linux, leave the field empty (Detect will find
+the environment) or point it at `~/.venvs/tpu310/bin/python`. On Windows,
+cvimodel conversion runs inside **WSL 2**:
 
 1. install WSL 2 once from an administrator PowerShell with `wsl --install`,
-   reboot if asked and finish the Ubuntu first-run setup;
-2. click **Build cvimodel**: the “Python not found” dialog offers
-   **Create WSL environment…**, which installs tpu-mlir into
-   `~/.venvs/tpu310` inside WSL. If the environment already exists,
-   **Detect** in Settings finds it;
+   reboot if asked and finish the Ubuntu first-run setup. This is the only
+   manual step; the distribution may ship any Python version;
+2. click **Build cvimodel** and choose **Create WSL environment…**. The Studio
+   looks for Python 3.10 in WSL and, if it is missing, downloads `uv` and a
+   private Python 3.10 into the user's home, then installs `tpu-mlir` into
+   `~/.venvs/tpu310`. No `sudo`, `apt`, `python3-venv` or manual `pip` is used;
 3. the field stores the Linux path, for example
    `/home/<user>/.venvs/tpu310/bin/python`.
+
+The first setup downloads about 1.5 GB (about 2.5 GB on disk) and can take
+several minutes. If the environment already exists, **Detect** in Settings
+finds it.
 
 The Studio calls `wsl.exe` for the conversion and translates the ONNX,
 calibration and output paths with `wslpath`, so the dataset and the resulting
@@ -347,8 +361,9 @@ itself into a temporary directory on every start. The frozen application runs
 training and the ONNX export through its own hidden modes
 (`--yolo-cli`, `--export-onnx`), so no external Python is involved.
 Conversion to cvimodel still needs Linux: `tpu-mlir` does not exist for
-Windows, so the Studio runs it inside WSL 2. The release build includes
-`tools/build_cvimodel.sh` and needs nothing else for that step.
+Windows, so the Studio runs it inside WSL 2. WSL 2 must be installed, but the
+release build includes `tools/build_cvimodel.sh` and sets up Python 3.10 plus
+`tpu-mlir` inside WSL automatically, so nothing else is installed by hand.
 
 On Linux, install the xcb development/runtime packages listed above first; the
 script copies those libraries into the bundle. The build script also adds
@@ -378,10 +393,13 @@ open **Settings → Python tpu-mlir** and press **Detect**, or click **Build
 cvimodel** and choose **Create WSL environment…**. The exported ONNX is
 portable and can also be converted on a Linux host or on the board itself.
 
-**“Python virtualenv support is missing inside WSL”** — in the Ubuntu terminal
-run `sudo apt update && sudo apt install python3-venv python3-pip` (use
-`python3.10-venv` if your distro has Python 3.10), then press **Create WSL
-environment…** again.
+**“Could not install uv inside WSL”** — the automatic setup downloads `uv`
+from GitHub. Check that the WSL distribution has internet access and either
+`curl` or `wget` (`sudo apt install curl` if neither exists). The setup does
+not need `python3-venv`: a private Python 3.10 is downloaded when the
+distribution only ships 3.12/3.14. The older “ensurepip is not available” /
+`python3.14-venv` errors cannot occur in this flow; if they are shown, the
+release is older than v1.0.4.
 
 **“The tpu-mlir interpreter must be a Linux path”** — on Windows the
 interpreter must be the Linux path of the environment inside WSL, for example
