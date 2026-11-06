@@ -275,6 +275,9 @@ git push origin v1.0.1
   AGPL-3.0).
 - **No autostart is installed.** The board is free after boot; the stream or
   face mode is started manually.
+- **The stock firmware uses `root:root` over SSH.** Change the password and
+  keep the board on a trusted network; Lichee YOLO Studio stores the SSH
+  credentials in its local config file.
 
 ## License
 
