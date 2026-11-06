@@ -127,8 +127,8 @@ port 7777. The reverse is also true: `yolo_stream/start_stream.sh` stops
   `preview.jpg`)
 
 <p align="center">
-  <img width="1000" alt="face_stream browser UI with recognized faces"
-       src="https://github.com/user-attachments/assets/fb50ce8b-873b-45b7-92f6-5292f71f87e1">
+  <img width="1000" alt="face_stream browser UI with a synthetic face and the recognition sidebar"
+       src="../docs/images/face-stream-ui.png">
   <br>
   <sub>The browser UI: video, recognized names and the face gallery.</sub>
 </p>
